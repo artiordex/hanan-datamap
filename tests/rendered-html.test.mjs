@@ -30,9 +30,10 @@ test("server-renders the public data map shell", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>한난 공공데이터맵<\/title>/i);
-  assert.match(html, /한난 공공데이터맵/);
-  assert.match(html, /업무 도메인 지도/);
-  assert.match(html, /데이터셋/);
+  assert.match(html, /한국지역난방공사 데이터맵/);
+  assert.match(html, /공공데이터의 소재지를 알려드립니다/);
+  assert.match(html, /데이터현황/);
+  assert.match(html, /범례/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
