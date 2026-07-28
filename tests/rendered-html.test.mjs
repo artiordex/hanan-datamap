@@ -23,15 +23,17 @@ async function render() {
   );
 }
 
-test("server-renders the public data JSON browser", async () => {
+test("server-renders the public data map shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<title>한국지역난방공사 공공데이터 JSON<\/title>/i);
-  assert.match(html, /한국지역난방공사 공공데이터 JSON/);
+  assert.match(html, /공공데이터맵/);
   assert.match(html, /JSON 내려받기/);
+  assert.match(html, /데이터 현황/);
+  assert.match(html, /범례/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
