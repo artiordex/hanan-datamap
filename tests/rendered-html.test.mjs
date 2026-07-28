@@ -23,26 +23,28 @@ async function render() {
   );
 }
 
-test("server-renders the public data map shell", async () => {
+test("server-renders the public data JSON browser", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>한난 공공데이터맵<\/title>/i);
-  assert.match(html, /한국지역난방공사 데이터맵/);
-  assert.match(html, /공공데이터의 소재지를 알려드립니다/);
-  assert.match(html, /데이터현황/);
-  assert.match(html, /범례/);
+  assert.match(html, /<title>한국지역난방공사 공공데이터 JSON<\/title>/i);
+  assert.match(html, /한국지역난방공사 공공데이터 JSON/);
+  assert.match(html, /JSON 내려받기/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("uses the extracted portal dataset records", async () => {
-  const data = await readFile(new URL("../app/data.ts", import.meta.url), "utf8");
-  const recordCount = (data.match(/"kind":/g) ?? []).length;
+test("uses the generated JSON dataset", async () => {
+  const raw = await readFile(
+    new URL("../public/data/hanan-datasets.json", import.meta.url),
+    "utf8",
+  );
+  const catalog = JSON.parse(raw);
 
-  assert.equal(recordCount, 393);
-  assert.match(data, /한국지역난방공사/);
-  assert.match(data, /REST\/XML/);
-  assert.match(data, /열요금/);
+  assert.equal(catalog.source.organization, "한국지역난방공사");
+  assert.equal(catalog.summary.total, 393);
+  assert.equal(catalog.summary.files, 377);
+  assert.equal(catalog.summary.apis, 16);
+  assert.ok(catalog.datasets.some((record) => record.sourceId === "15157841"));
 });

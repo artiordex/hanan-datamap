@@ -1,71 +1,17 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
-import { datasets, sourceSnapshot, type DatasetRecord } from "./data";
+import { useMemo, useState } from "react";
+import {
+  dataSummary,
+  datasets,
+  sourceSnapshot,
+  themeOrder,
+  type DatasetKind,
+  type DatasetRecord,
+} from "./data";
 
-const domainOrder = [
-  "에너지 수요·생산",
-  "설비·자산",
-  "환경·안전",
-  "지역·공급",
-  "고객·요금",
-  "경영·행정",
-  "AI·이미지",
-  "기타",
-] as const;
-
-const domainStyles: Record<string, { accent: string; soft: string }> = {
-  "에너지 수요·생산": { accent: "#0f766e", soft: "#dff5f1" },
-  "설비·자산": { accent: "#2f4f99", soft: "#e9efff" },
-  "환경·안전": { accent: "#2ab7a9", soft: "#e8fbf7" },
-  "지역·공급": { accent: "#e95d6a", soft: "#ffe9ec" },
-  "고객·요금": { accent: "#f58232", soft: "#fff0e3" },
-  "경영·행정": { accent: "#476400", soft: "#edf7d8" },
-  "AI·이미지": { accent: "#8e69dc", soft: "#f0eafd" },
-  기타: { accent: "#a86f6f", soft: "#f8ecec" },
-};
-
-const domainDescriptions: Record<string, string> = {
-  "에너지 수요·생산":
-    "열생산, 열공급, 발전량, 전력수요, 연료사용처럼 에너지 흐름을 나타내는 데이터가 모여 있습니다.",
-  "설비·자산":
-    "열수송관, 맨홀, 밸브, 배관, 공급시설, 지사별 설비용량처럼 물리 자산과 유지관리 데이터를 묶었습니다.",
-  "환경·안전":
-    "온실가스, 배출계수, 기상관측, 태양광, 안전 진단 등 환경과 안전 판단에 쓰이는 데이터입니다.",
-  "지역·공급":
-    "지역별, 지사별, 권역별 공급현황처럼 공간 단위로 한난 데이터를 찾는 경로입니다.",
-  "고객·요금":
-    "열요금, 세대, 건물, 계량기, 고객서비스처럼 사용처와 요금 흐름에 가까운 데이터입니다.",
-  "경영·행정":
-    "입찰, 계약, 감사, ESG, 공시, 조직 등 기관 운영과 행정 성격의 데이터를 모았습니다.",
-  "AI·이미지":
-    "학습용 이미지, 열화상, 항공사진 등 모델 학습이나 시각 분석에 가까운 데이터입니다.",
-  기타: "주요 업무 도메인 규칙에 바로 묶이지 않는 데이터입니다.",
-};
-
-const bubblePlacements: Record<string, { x: number; y: number; size: number }> = {
-  "에너지 수요·생산": { x: 74, y: 49, size: 124 },
-  "설비·자산": { x: 37, y: 25, size: 116 },
-  "환경·안전": { x: 63, y: 19, size: 116 },
-  "지역·공급": { x: 29, y: 56, size: 112 },
-  "고객·요금": { x: 64, y: 79, size: 112 },
-  "경영·행정": { x: 33, y: 78, size: 108 },
-  "AI·이미지": { x: 82, y: 30, size: 104 },
-  기타: { x: 52, y: 12, size: 96 },
-};
-
-const quickTerms = [
-  "지역난방",
-  "지사별",
-  "태양광",
-  "온실가스",
-  "열요금",
-  "열수송관",
-  "전력수요",
-  "기상관측",
-] as const;
-
-type KindFilter = "전체" | "file" | "api";
+type KindFilter = "all" | DatasetKind;
+type SortKey = "views" | "downloads" | "applications" | "name";
 
 const numberFormatter = new Intl.NumberFormat("ko-KR");
 
@@ -73,27 +19,20 @@ function formatNumber(value: number) {
   return numberFormatter.format(value);
 }
 
-function getDomainStyle(domain: string) {
-  return domainStyles[domain] ?? domainStyles.기타;
+function metricFor(record: DatasetRecord) {
+  return record.kind === "api" ? record.applications : record.downloads;
 }
 
-function toStyle(domain: string, extra?: Record<string, string | number>) {
-  const style = getDomainStyle(domain);
-  return {
-    "--accent": style.accent,
-    "--soft": style.soft,
-    ...extra,
-  } as CSSProperties;
-}
-
-function searchBlob(record: DatasetRecord) {
+function searchText(record: DatasetRecord) {
   return [
-    record.title,
-    record.domain,
+    record.name,
+    record.originalName,
+    record.theme,
     record.category,
+    record.categoryGroup,
     record.format,
-    record.timeScale,
-    record.spaceScale,
+    record.updateCycle,
+    record.department,
     record.description,
     ...record.keywords,
   ]
@@ -101,393 +40,328 @@ function searchBlob(record: DatasetRecord) {
     .toLowerCase();
 }
 
-function matchesQuery(record: DatasetRecord, query: string) {
+function matches(record: DatasetRecord, query: string) {
   const normalized = query.trim().toLowerCase();
-  return normalized.length === 0 || searchBlob(record).includes(normalized);
+  return !normalized || searchText(record).includes(normalized);
 }
 
-function topKeywords(records: DatasetRecord[]) {
-  const counts = new Map<string, number>();
-  for (const record of records) {
-    for (const keyword of record.keywords) {
-      counts.set(keyword, (counts.get(keyword) ?? 0) + 1);
+function compareRecords(sortKey: SortKey) {
+  return (a: DatasetRecord, b: DatasetRecord) => {
+    if (sortKey === "name") {
+      return a.name.localeCompare(b.name, "ko-KR");
     }
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([keyword]) => keyword);
+
+    const left =
+      sortKey === "downloads"
+        ? a.downloads
+        : sortKey === "applications"
+          ? a.applications
+          : a.views;
+    const right =
+      sortKey === "downloads"
+        ? b.downloads
+        : sortKey === "applications"
+          ? b.applications
+          : b.views;
+
+    return right - left || a.name.localeCompare(b.name, "ko-KR");
+  };
 }
 
 export function DataMapClient() {
   const [query, setQuery] = useState("");
-  const [resultQuery, setResultQuery] = useState("");
-  const [activeKind, setActiveKind] = useState<KindFilter>("전체");
-  const [selectedDomain, setSelectedDomain] = useState("에너지 수요·생산");
-  const [selectedId, setSelectedId] = useState("");
-  const [legendOpen, setLegendOpen] = useState(true);
-  const [zoom, setZoom] = useState(1);
+  const [kind, setKind] = useState<KindFilter>("all");
+  const [theme, setTheme] = useState("all");
+  const [sortKey, setSortKey] = useState<SortKey>("views");
+  const [selectedId, setSelectedId] = useState(datasets[0]?.id ?? "");
 
-  const baseRecords = useMemo(() => {
-    return datasets.filter((record) => {
-      const kindMatch = activeKind === "전체" || record.kind === activeKind;
-      return kindMatch && matchesQuery(record, query);
-    });
-  }, [activeKind, query]);
-
-  const domainStats = useMemo(() => {
-    return domainOrder.map((domain) => {
-      const records = baseRecords.filter((record) => record.domain === domain);
-      return {
-        domain,
-        count: records.length,
-        fileCount: records.filter((record) => record.kind === "file").length,
-        apiCount: records.filter((record) => record.kind === "api").length,
-        views: records.reduce((sum, record) => sum + record.views, 0),
-        downloads: records.reduce((sum, record) => sum + record.downloads, 0),
-        applications: records.reduce(
-          (sum, record) => sum + record.applications,
-          0,
-        ),
-        keywords: topKeywords(records),
-      };
-    });
-  }, [baseRecords]);
-
-  const selectedStat =
-    domainStats.find((stat) => stat.domain === selectedDomain) ?? domainStats[0];
-
-  const selectedRecords = useMemo(() => {
-    return baseRecords
-      .filter((record) => record.domain === selectedStat.domain)
-      .filter((record) => matchesQuery(record, resultQuery))
-      .sort((a, b) => b.views - a.views);
-  }, [baseRecords, resultQuery, selectedStat.domain]);
+  const filtered = useMemo(() => {
+    return datasets
+      .filter((record) => kind === "all" || record.kind === kind)
+      .filter((record) => theme === "all" || record.theme === theme)
+      .filter((record) => matches(record, query))
+      .sort(compareRecords(sortKey));
+  }, [kind, query, sortKey, theme]);
 
   const selectedRecord =
-    selectedRecords.find((record) => record.id === selectedId) ??
-    selectedRecords[0] ??
-    baseRecords[0] ??
-    datasets[0];
+    filtered.find((record) => record.id === selectedId) ?? filtered[0] ?? datasets[0];
 
-  const totals = useMemo(() => {
+  const visibleSummary = useMemo(() => {
     return {
-      all: datasets.length,
-      visible: baseRecords.length,
-      files: baseRecords.filter((record) => record.kind === "file").length,
-      apis: baseRecords.filter((record) => record.kind === "api").length,
+      total: filtered.length,
+      files: filtered.filter((record) => record.kind === "file").length,
+      apis: filtered.filter((record) => record.kind === "api").length,
+      views: filtered.reduce((sum, record) => sum + record.views, 0),
     };
-  }, [baseRecords]);
+  }, [filtered]);
 
-  const maxDomainCount = Math.max(
-    ...domainStats.map((stat) => stat.count),
-    1,
-  );
-
-  function chooseDomain(domain: string) {
-    setSelectedDomain(domain);
-    const firstRecord = baseRecords
-      .filter((record) => record.domain === domain)
-      .sort((a, b) => b.views - a.views)[0];
-    setSelectedId(firstRecord?.id ?? "");
+  function pickTheme(nextTheme: string) {
+    setTheme(nextTheme);
+    setSelectedId("");
   }
 
-  function chooseRecord(record: DatasetRecord) {
-    setSelectedDomain(record.domain);
-    setSelectedId(record.id);
+  function pickKind(nextKind: KindFilter) {
+    setKind(nextKind);
+    setSelectedId("");
   }
 
-  function applyQuickTerm(term: string) {
-    const nextRecords = datasets.filter(
-      (record) =>
-        (activeKind === "전체" || record.kind === activeKind) &&
-        matchesQuery(record, term),
-    );
-    const nextDomain =
-      domainOrder.find((domain) =>
-        nextRecords.some((record) => record.domain === domain),
-      ) ?? selectedDomain;
-    setQuery(term);
-    setResultQuery("");
-    chooseDomain(nextDomain);
-  }
-
-  function resetMap() {
+  function resetFilters() {
     setQuery("");
-    setResultQuery("");
-    setActiveKind("전체");
-    setZoom(1);
-    chooseDomain("에너지 수요·생산");
+    setKind("all");
+    setTheme("all");
+    setSortKey("views");
+    setSelectedId(datasets[0]?.id ?? "");
   }
 
   return (
-    <main className="datamap-page">
-      <header className="map-header">
-        <div className="brand-area">
-          <span className="swirl-mark" aria-hidden="true">
-            <span />
-          </span>
-          <div>
-            <h1>한국지역난방공사 데이터맵</h1>
-            <p>공공데이터의 소재지를 알려드립니다.</p>
-          </div>
+    <main className="app-shell">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">{sourceSnapshot.portal}</p>
+          <h1>{sourceSnapshot.organization} 공공데이터 JSON</h1>
         </div>
-        <a
-          className="guide-link"
-          href="https://www.data.go.kr/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          공공데이터포털
+        <a className="json-link" href="/data/hanan-datasets.json" download>
+          JSON 내려받기
         </a>
       </header>
 
-      <section className="map-toolbar" aria-label="데이터맵 도구">
-        <button className="home-button" type="button" onClick={resetMap}>
-          홈
-        </button>
-        <label className="main-search">
-          <span>데이터맵 검색</span>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="데이터맵 검색"
-          />
-          <button type="button" onClick={() => setResultQuery("")}>
-            검색
-          </button>
-        </label>
-        <label className="result-search">
-          <span>결과 내 검색</span>
-          <input
-            value={resultQuery}
-            onChange={(event) => setResultQuery(event.target.value)}
-            placeholder="결과 내 검색"
-          />
-        </label>
-        <div className="toolbar-controls" aria-label="지도 보기">
-          <button
-            type="button"
-            onClick={() => setZoom((value) => Math.min(value + 0.08, 1.24))}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            onClick={() => setZoom((value) => Math.max(value - 0.08, 0.84))}
-          >
-            -
-          </button>
-          <button type="button" onClick={resetMap}>
+      <section className="summary-strip" aria-label="데이터 요약">
+        <div>
+          <span>전체</span>
+          <strong>{formatNumber(dataSummary.total)}</strong>
+        </div>
+        <div>
+          <span>파일</span>
+          <strong>{formatNumber(dataSummary.files)}</strong>
+        </div>
+        <div>
+          <span>API</span>
+          <strong>{formatNumber(dataSummary.apis)}</strong>
+        </div>
+        <div>
+          <span>조회수</span>
+          <strong>{formatNumber(dataSummary.views)}</strong>
+        </div>
+        <div>
+          <span>다운로드</span>
+          <strong>{formatNumber(dataSummary.downloads)}</strong>
+        </div>
+        <div>
+          <span>활용신청</span>
+          <strong>{formatNumber(dataSummary.applications)}</strong>
+        </div>
+      </section>
+
+      <section className="workspace" aria-label="데이터 탐색">
+        <aside className="sidebar">
+          <div className="control-group">
+            <label htmlFor="dataset-search">검색</label>
+            <input
+              id="dataset-search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="데이터명, 키워드, 분류체계"
+            />
+          </div>
+
+          <div className="control-group">
+            <span>제공 방식</span>
+            <div className="segmented" aria-label="제공 방식">
+              {[
+                ["all", "전체"],
+                ["file", "파일"],
+                ["api", "API"],
+              ].map(([value, label]) => (
+                <button
+                  className={kind === value ? "active" : ""}
+                  key={value}
+                  type="button"
+                  onClick={() => pickKind(value as KindFilter)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="control-group">
+            <label htmlFor="theme-select">주제</label>
+            <select
+              id="theme-select"
+              value={theme}
+              onChange={(event) => pickTheme(event.target.value)}
+            >
+              <option value="all">전체 주제</option>
+              {themeOrder.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="control-group">
+            <label htmlFor="sort-select">정렬</label>
+            <select
+              id="sort-select"
+              value={sortKey}
+              onChange={(event) => setSortKey(event.target.value as SortKey)}
+            >
+              <option value="views">조회수 높은 순</option>
+              <option value="downloads">다운로드 높은 순</option>
+              <option value="applications">활용신청 높은 순</option>
+              <option value="name">이름순</option>
+            </select>
+          </div>
+
+          <button className="reset-button" type="button" onClick={resetFilters}>
             초기화
           </button>
-        </div>
-      </section>
 
-      <section className="quick-row" aria-label="추천 검색어">
-        <div className="source-tabs" aria-label="제공방식">
-          {(["전체", "file", "api"] as const).map((kind) => (
-            <button
-              className={activeKind === kind ? "active" : ""}
-              key={kind}
-              type="button"
-              onClick={() => setActiveKind(kind)}
-            >
-              {kind === "전체" ? "전체" : kind === "file" ? "파일데이터" : "오픈API"}
-            </button>
-          ))}
-        </div>
-        <div className="term-chips">
-          {quickTerms.map((term) => (
-            <button key={term} type="button" onClick={() => applyQuickTerm(term)}>
-              {term}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="map-board" aria-label="업무 도메인 데이터맵">
-        {legendOpen ? (
-          <aside className="legend-card">
-            <div className="floating-card-title">
-              <strong>범례</strong>
-              <button type="button" onClick={() => setLegendOpen(false)}>
-                닫기
-              </button>
-            </div>
-            <ul>
-              {domainStats.map((stat) => (
-                <li key={stat.domain} style={toStyle(stat.domain)}>
-                  <span aria-hidden="true" />
-                  <button type="button" onClick={() => chooseDomain(stat.domain)}>
-                    {stat.domain}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </aside>
-        ) : (
-          <button
-            className="legend-toggle"
-            type="button"
-            onClick={() => setLegendOpen(true)}
-          >
-            범례
-          </button>
-        )}
-
-        <div
-          className="map-canvas"
-          style={{ "--zoom": zoom } as CSSProperties}
-        >
-          <div className="orbit" aria-hidden="true" />
-          {domainStats.map((stat, index) => {
-            const placement = bubblePlacements[stat.domain];
-            const size =
-              placement.size +
-              Math.round((stat.count / maxDomainCount) * 18);
-            return (
-              <span
-                className="orbit-dot"
-                aria-hidden="true"
-                key={`dot-${stat.domain}`}
-                style={toStyle(stat.domain, {
-                  "--angle": `${index * 45}deg`,
-                })}
-              />
-            );
-          })}
-          <button className="center-bubble" type="button" onClick={resetMap}>
-            <span>데이터현황</span>
-            <strong>{formatNumber(totals.visible)}</strong>
-          </button>
-          {domainStats.map((stat) => {
-            const placement = bubblePlacements[stat.domain];
-            const size =
-              placement.size +
-              Math.round((stat.count / maxDomainCount) * 18);
-            return (
+          <div className="theme-list" aria-label="주제별 건수">
+            {dataSummary.byTheme.map((item) => (
               <button
-                className={`topic-bubble ${
-                  selectedDomain === stat.domain ? "active" : ""
-                } ${stat.count === 0 ? "empty" : ""}`}
-                key={stat.domain}
+                className={theme === item.name ? "active" : ""}
+                key={item.name}
                 type="button"
-                onClick={() => chooseDomain(stat.domain)}
-                style={toStyle(stat.domain, {
-                  "--x": `${placement.x}%`,
-                  "--y": `${placement.y}%`,
-                  "--size": `${size}px`,
-                })}
+                onClick={() => pickTheme(item.name)}
               >
-                <span>{stat.domain}</span>
-                <strong>{stat.count ? formatNumber(stat.count) : "-"}</strong>
+                <span>{item.name}</span>
+                <strong>{formatNumber(item.count)}</strong>
               </button>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        </aside>
 
-        <aside className="info-card" style={toStyle(selectedStat.domain)}>
-          <div className="info-heading">
-            <span>{selectedStat.domain}</span>
-            <strong>{formatNumber(selectedStat.count)}</strong>
-          </div>
-          <p>{domainDescriptions[selectedStat.domain]}</p>
-          <div className="info-metrics">
-            <span>파일 {formatNumber(selectedStat.fileCount)}</span>
-            <span>API {formatNumber(selectedStat.apiCount)}</span>
-            <span>조회 {formatNumber(selectedStat.views)}</span>
-          </div>
-          <div className="keyword-strip">
-            {selectedStat.keywords.length ? (
-              selectedStat.keywords.map((keyword) => (
-                <button
-                  key={keyword}
-                  type="button"
-                  onClick={() => applyQuickTerm(keyword)}
-                >
-                  {keyword}
-                </button>
-              ))
-            ) : (
-              <span>키워드 없음</span>
-            )}
+        <section className="result-panel" aria-label="검색 결과">
+          <div className="result-heading">
+            <div>
+              <p>검색 결과</p>
+              <h2>{formatNumber(visibleSummary.total)}건</h2>
+            </div>
+            <div className="visible-metrics">
+              <span>파일 {formatNumber(visibleSummary.files)}</span>
+              <span>API {formatNumber(visibleSummary.apis)}</span>
+              <span>조회 {formatNumber(visibleSummary.views)}</span>
+            </div>
           </div>
 
-          <div className="related-heading">
-            <strong>연관항목</strong>
-            <span>{formatNumber(selectedRecords.length)}건</span>
-          </div>
-          <div className="related-list">
-            {selectedRecords.length ? (
-              selectedRecords.slice(0, 8).map((record) => (
-                <button
-                  className={selectedRecord.id === record.id ? "selected" : ""}
-                  key={`${record.kind}-${record.id}-${record.title}`}
-                  type="button"
-                  onClick={() => chooseRecord(record)}
-                >
-                  <strong>{record.title}</strong>
-                  <span>
-                    {record.kind === "api" ? "API" : record.format} · 조회{" "}
-                    {formatNumber(record.views)}
-                  </span>
-                </button>
-              ))
-            ) : (
-              <div className="empty-state">연관항목이 존재하지 않습니다.</div>
-            )}
+          <div className="dataset-table" role="table" aria-label="데이터셋 목록">
+            <div className="table-row table-head" role="row">
+              <span role="columnheader">데이터명</span>
+              <span role="columnheader">주제</span>
+              <span role="columnheader">형식</span>
+              <span role="columnheader">조회</span>
+              <span role="columnheader">이용</span>
+            </div>
+            {filtered.slice(0, 160).map((record) => (
+              <button
+                className={`table-row ${selectedRecord?.id === record.id ? "selected" : ""}`}
+                key={record.id}
+                type="button"
+                role="row"
+                onClick={() => setSelectedId(record.id)}
+              >
+                <span role="cell">
+                  <strong>{record.name}</strong>
+                  <small>{record.category}</small>
+                </span>
+                <span role="cell">{record.theme}</span>
+                <span role="cell">{record.format}</span>
+                <span role="cell">{formatNumber(record.views)}</span>
+                <span role="cell">{formatNumber(metricFor(record))}</span>
+              </button>
+            ))}
           </div>
 
+          {filtered.length > 160 ? (
+            <p className="limit-note">
+              화면 성능을 위해 상위 160건을 표시했습니다. 검색어를 더 좁히면 나머지 결과를 볼 수 있습니다.
+            </p>
+          ) : null}
+        </section>
+
+        <aside className="detail-panel" aria-label="선택 데이터 상세">
           {selectedRecord ? (
-            <section className="record-view">
-              <div>
-                <span>{selectedRecord.kind === "api" ? "오픈API" : "파일데이터"}</span>
-                <h2>{selectedRecord.title}</h2>
+            <>
+              <div className="detail-heading">
+                <span>{selectedRecord.kind === "api" ? "Open API" : "파일데이터"}</span>
+                <h2>{selectedRecord.name}</h2>
               </div>
-              <dl>
+
+              <dl className="detail-list">
                 <div>
-                  <dt>포털 분류</dt>
+                  <dt>분류체계</dt>
                   <dd>{selectedRecord.category}</dd>
                 </div>
                 <div>
-                  <dt>시간/공간</dt>
-                  <dd>
-                    {selectedRecord.timeScale} · {selectedRecord.spaceScale}
-                  </dd>
+                  <dt>주제</dt>
+                  <dd>{selectedRecord.theme}</dd>
                 </div>
                 <div>
-                  <dt>이용 지표</dt>
-                  <dd>
-                    조회 {formatNumber(selectedRecord.views)}
-                    {selectedRecord.kind === "api"
-                      ? ` · 신청 ${formatNumber(selectedRecord.applications)}`
-                      : ` · 다운로드 ${formatNumber(selectedRecord.downloads)}`}
-                  </dd>
+                  <dt>형식</dt>
+                  <dd>{selectedRecord.format}</dd>
+                </div>
+                <div>
+                  <dt>갱신</dt>
+                  <dd>{selectedRecord.updateCycle || "-"}</dd>
+                </div>
+                <div>
+                  <dt>기준일</dt>
+                  <dd>{selectedRecord.searchDate || sourceSnapshot.asOf}</dd>
+                </div>
+                <div>
+                  <dt>관리부서</dt>
+                  <dd>{selectedRecord.department || "-"}</dd>
                 </div>
               </dl>
+
+              <div className="detail-metrics">
+                <div>
+                  <span>조회</span>
+                  <strong>{formatNumber(selectedRecord.views)}</strong>
+                </div>
+                <div>
+                  <span>{selectedRecord.kind === "api" ? "활용신청" : "다운로드"}</span>
+                  <strong>{formatNumber(metricFor(selectedRecord))}</strong>
+                </div>
+                <div>
+                  <span>행 수</span>
+                  <strong>{selectedRecord.rowCount ? formatNumber(selectedRecord.rowCount) : "-"}</strong>
+                </div>
+              </div>
+
+              {selectedRecord.description ? (
+                <p className="description">{selectedRecord.description}</p>
+              ) : null}
+
+              <div className="keyword-box">
+                {selectedRecord.keywords.length ? (
+                  selectedRecord.keywords.slice(0, 12).map((keyword) => (
+                    <button
+                      key={keyword}
+                      type="button"
+                      onClick={() => setQuery(keyword)}
+                    >
+                      {keyword}
+                    </button>
+                  ))
+                ) : (
+                  <span>키워드 없음</span>
+                )}
+              </div>
+
               {selectedRecord.url ? (
-                <a
-                  href={selectedRecord.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
+                <a className="portal-link" href={selectedRecord.url} target="_blank" rel="noreferrer">
                   공공데이터포털 열기
                 </a>
               ) : null}
-            </section>
-          ) : null}
+            </>
+          ) : (
+            <div className="empty-detail">선택된 데이터가 없습니다.</div>
+          )}
         </aside>
       </section>
-
-      <footer className="map-footer">
-        <span>
-          {sourceSnapshot.organization} · {sourceSnapshot.asOf} 기준
-        </span>
-        <span>
-          파일 {formatNumber(totals.files)} · API {formatNumber(totals.apis)}
-        </span>
-      </footer>
     </main>
   );
 }

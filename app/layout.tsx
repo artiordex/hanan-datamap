@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "한난 공공데이터맵",
+  title: "한국지역난방공사 공공데이터 JSON",
   description:
-    "한국지역난방공사 공공데이터포털 목록을 업무 도메인별로 탐색하는 데이터맵입니다.",
+    "공공데이터포털의 한국지역난방공사 파일데이터와 Open API 목록을 JSON으로 정리한 데이터 탐색 화면입니다.",
 };
 
 export default function RootLayout({
