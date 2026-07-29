@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import {
   dataSummary,
   datasets,
@@ -19,6 +19,18 @@ type ThemeStyle = {
   x: number;
   y: number;
   size: number;
+};
+
+type NodePosition = {
+  x: number;
+  y: number;
+};
+
+type DragState = {
+  theme: string;
+  startX: number;
+  startY: number;
+  moved: boolean;
 };
 
 const themeStyles: Record<string, ThemeStyle> = {
@@ -135,6 +147,10 @@ function topKeywords(records: DatasetRecord[]) {
     .map(([keyword]) => keyword);
 }
 
+function clampPercent(value: number) {
+  return Math.min(92, Math.max(8, value));
+}
+
 export function DataMapClient() {
   const [query, setQuery] = useState("");
   const [activeKind, setActiveKind] = useState<KindFilter>("all");
@@ -143,6 +159,9 @@ export function DataMapClient() {
   const [sortKey, setSortKey] = useState<SortKey>("views");
   const [legendOpen, setLegendOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const [nodePositions, setNodePositions] = useState<Record<string, NodePosition>>({});
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const draggedThemes = useRef(new Set<string>());
 
   const baseRecords = useMemo(() => {
     return datasets.filter((record) => {
@@ -204,6 +223,75 @@ export function DataMapClient() {
     setSelectedId(firstRecord?.id ?? "");
   }
 
+  function nodeStyle(theme: string, extra?: Record<string, string | number>) {
+    const position = nodePositions[theme];
+    return styleFor(theme, {
+      ...(position
+        ? {
+            "--x": `${position.x}%`,
+            "--y": `${position.y}%`,
+          }
+        : {}),
+      ...extra,
+    });
+  }
+
+  function beginNodeDrag(theme: string, event: PointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragState({
+      theme,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    });
+  }
+
+  function dragNode(theme: string, event: PointerEvent<HTMLButtonElement>) {
+    if (dragState?.theme !== theme) return;
+
+    const canvas = event.currentTarget.parentElement;
+    const rect = canvas?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+
+    const moved =
+      dragState.moved ||
+      Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) > 4;
+
+    if (moved) draggedThemes.current.add(theme);
+
+    setDragState((current) =>
+      current?.theme === theme
+        ? {
+            ...current,
+            moved,
+          }
+        : current,
+    );
+    setNodePositions((current) => ({
+      ...current,
+      [theme]: {
+        x: clampPercent(((event.clientX - rect.left) / rect.width) * 100),
+        y: clampPercent(((event.clientY - rect.top) / rect.height) * 100),
+      },
+    }));
+  }
+
+  function endNodeDrag(theme: string, event: PointerEvent<HTMLButtonElement>) {
+    if (dragState?.theme !== theme) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    setDragState(null);
+  }
+
+  function selectThemeFromNode(theme: string) {
+    if (draggedThemes.current.has(theme)) {
+      draggedThemes.current.delete(theme);
+      return;
+    }
+
+    chooseTheme(theme);
+  }
+
   function chooseRecord(record: DatasetRecord) {
     setSelectedTheme(record.theme);
     setSelectedId(record.id);
@@ -230,6 +318,7 @@ export function DataMapClient() {
     setSelectedId(datasets[0]?.id ?? "");
     setSortKey("views");
     setZoom(1);
+    setNodePositions({});
   }
 
   return (
@@ -383,8 +472,12 @@ export function DataMapClient() {
                 } ${stat.count === 0 ? "empty" : ""}`}
                 key={stat.theme}
                 type="button"
-                onClick={() => chooseTheme(stat.theme)}
-                style={styleFor(stat.theme, {
+                onClick={() => selectThemeFromNode(stat.theme)}
+                onPointerDown={(event) => beginNodeDrag(stat.theme, event)}
+                onPointerMove={(event) => dragNode(stat.theme, event)}
+                onPointerUp={(event) => endNodeDrag(stat.theme, event)}
+                onPointerCancel={(event) => endNodeDrag(stat.theme, event)}
+                style={nodeStyle(stat.theme, {
                   "--size": `calc(var(--base-size) + ${sizeBoost}px)`,
                 })}
               >
