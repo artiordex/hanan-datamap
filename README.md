@@ -26,3 +26,14 @@ GitHub 저장소를 Cloudflare Pages에 연결한 뒤 아래 값으로 설정합
 ```text
 /data/hanan-datasets.json
 ```
+
+## Cloudflare Workers 설정
+
+Workers의 Git 배포 화면을 사용할 때는 아래 값으로 설정합니다.
+
+| 항목 | 값 |
+| --- | --- |
+| Project name | `hanan-datamap` |
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
+| Root directory | 저장소 루트가 이 폴더면 비워두기 |
