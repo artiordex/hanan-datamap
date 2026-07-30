@@ -1,26 +1,28 @@
-# 한국지역난방공사 공공데이터 JSON 브라우저
+# 한난 데이터맵
 
-공공데이터포털에서 받은 한국지역난방공사 엑셀 파일을 정규화된 JSON으로 변환하고, 그 JSON을 바로 탐색할 수 있는 Vinext/Next 앱입니다.
+한국지역난방공사 공공데이터 JSON을 정적으로 제공하고, Vite로 빌드한 단일 페이지 데이터맵입니다.
 
-## 데이터 생성
-
-```bash
-python scripts/extract_data.py
-```
-
-생성 파일:
-
-- `public/data/hanan-datasets.json`
-
-## 실행
+## 로컬 실행
 
 ```bash
 npm install
 npm run dev
 ```
 
-## 검증
+## Cloudflare Pages 설정
 
-```bash
-npm test
+GitHub 저장소를 Cloudflare Pages에 연결한 뒤 아래 값으로 설정합니다.
+
+| 항목 | 값 |
+| --- | --- |
+| Framework preset | Vite |
+| Build command | `npm run build` |
+| Build output directory | `dist` |
+| Root directory | 저장소 루트가 이 폴더면 비워두고, 상위 저장소 안에 있으면 `datamap-web` |
+| Node.js version | `22.13.0` |
+
+배포 후 JSON 파일은 아래 경로로 정적으로 제공됩니다.
+
+```text
+/data/hanan-datasets.json
 ```
