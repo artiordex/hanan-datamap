@@ -1187,7 +1187,7 @@ export function DataMapClient() {
         activeExtension === "all" || extensionLabel(record) === activeExtension;
       return kindMatch && extensionMatch && matches(record, query);
     });
-  }, [activeExtension, activeKind, query]);
+  }, [activeExtension, activeKind, query, datasets]);
 
   const themeStats = useMemo<ThemeStat[]>(() => {
     return themeOrder.map((theme, index) => {
