@@ -374,6 +374,60 @@ a {
   background: #f3f4f6;
 }
 
+.network-toolbar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.view-mode-toggle {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+}
+
+.view-mode-toggle button {
+  min-width: 68px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  color: #4b5563;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.view-mode-toggle button.active {
+  background: var(--primary-dark);
+  color: #ffffff;
+}
+
+.canvas-help-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5563;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+  cursor: help;
+}
+
+.canvas-help-button:hover {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+}
+
 .canvas-map-controls {
   position: absolute;
   top: 16px;
@@ -543,6 +597,10 @@ a {
   opacity: 1;
 }
 
+.d3-graph-layer.dragging .d3-node.record:not(.drag-source) .d3-record-label {
+  opacity: 0.38;
+}
+
 .d3-node circle {
   stroke: rgba(255, 255, 255, 0.84);
   stroke-width: 2;
@@ -575,6 +633,12 @@ a {
   stroke: transparent;
   stroke-width: 0;
   filter: none;
+}
+
+.d3-node.record.drag-source circle:not(.d3-record-hit) {
+  stroke: #ffffff;
+  stroke-width: 4;
+  filter: drop-shadow(0 14px 24px rgba(15, 23, 42, 0.22));
 }
 
 .d3-node-label,
@@ -615,6 +679,27 @@ a {
   font-weight: 900;
 }
 
+.d3-label-click-target {
+  fill: #ffffff;
+  fill-opacity: 0;
+  cursor: pointer;
+  pointer-events: all;
+  stroke: none;
+}
+
+.d3-label-highlight-bg {
+  fill: #fef08a;
+  opacity: 0.96;
+  pointer-events: none;
+}
+
+.d3-label-highlight {
+  fill: #111827;
+  paint-order: normal;
+  stroke: transparent;
+  stroke-width: 0;
+}
+
 .d3-record-label {
   fill: #0f172a;
   cursor: pointer;
@@ -636,6 +721,27 @@ a {
 .record-table-view {
   display: grid;
   min-height: 0;
+}
+
+.record-table-view {
+  align-content: start;
+  gap: 14px;
+}
+
+.dataset-list-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.dataset-list-summary span {
+  border-radius: 999px;
+  background: #eff6ff;
+  color: var(--primary-dark);
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .dataset-list {
@@ -803,6 +909,8 @@ a {
 .result-search input:focus,
 .result-search button:focus-visible,
 .condition-select select:focus,
+.view-mode-toggle button:focus-visible,
+.canvas-help-button:focus-visible,
 .panel-actions button:focus-visible,
 .canvas-map-controls button:focus-visible,
 .keyword-row > button:focus-visible,
@@ -886,10 +994,33 @@ a {
     min-height: 680px;
   }
 
+  .network-toolbar {
+    right: 14px;
+  }
+
   .map-footer {
     position: static;
     justify-content: flex-start;
     padding: 0 16px 16px;
+  }
+}
+
+@media (max-width: 760px) {
+  .network-toolbar {
+    top: 12px;
+    right: 12px;
+    left: auto;
+  }
+
+  .view-mode-toggle button {
+    min-width: 58px;
+    height: 30px;
+    padding: 0 10px;
+  }
+
+  .canvas-help-button {
+    width: 30px;
+    height: 30px;
   }
 }
 

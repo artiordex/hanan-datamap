@@ -12,6 +12,7 @@ type KindFilter = "all" | DatasetKind;
 type SortKey = "views" | "downloads" | "applications" | "name";
 
 type DatasetKind = "file" | "api";
+type RecordViewMode = "network" | "list";
 
 type NamedCount = {
   name: string;
@@ -127,6 +128,7 @@ type GraphItem = {
   countLabel: string;
   color: string;
   radius: number;
+  tooltip?: string;
   parentId?: string;
   isEmpty?: boolean;
   theme?: string;
@@ -148,6 +150,7 @@ type GraphNode = d3.SimulationNodeDatum & {
   color: string;
   radius: number;
   kind: GraphNodeKind;
+  tooltip?: string;
   parentId?: string;
   targetX: number;
   targetY: number;
@@ -157,6 +160,7 @@ type GraphNode = d3.SimulationNodeDatum & {
   recordId?: string;
   isCenter?: boolean;
   isEmpty?: boolean;
+  labelLane?: number;
 };
 
 type GraphLink = {
@@ -172,6 +176,7 @@ type IconName =
   | "chevronsLeft"
   | "chevronsRight"
   | "fitView"
+  | "help"
   | "home"
   | "minus"
   | "plus"
@@ -222,16 +227,22 @@ function formatRecordValue(value: unknown) {
   return String(value);
 }
 
+function normalizeInfoRows(rows: Array<{ label: string; value: unknown }>) {
+  return rows
+    .map((row) => ({ ...row, value: formatRecordValue(row.value) }))
+    .filter((row) => row.value !== "-");
+}
+
 function recordInfoRows(record: DatasetRecord) {
-  const rows = [
+  return normalizeInfoRows([
     { label: "데이터명", value: record.name },
     { label: "데이터유형", value: kindDisplay(record) },
     ...(record.kind === "file" ? [{ label: "파일아이디", value: record.fileId }] : []),
+    { label: "제공기관", value: record.provider },
+    { label: "등록일", value: record.registeredAt },
     { label: "1차분류", value: level1Label(record) },
     { label: "2차분류", value: level2Label(record) },
-    { label: "제공기관", value: record.provider },
     { label: "확장자", value: record.extension || record.format },
-    { label: "등록일", value: record.registeredAt },
     { label: "갱신주기", value: record.updateCycle },
     { label: "행 수", value: record.rowCount },
     { label: "키워드", value: record.keywords },
@@ -246,11 +257,7 @@ function recordInfoRows(record: DatasetRecord) {
     { label: "심의유형", value: record.reviewType },
     { label: "라이선스", value: record.license },
     { label: "참고문서", value: record.referenceDocument },
-  ];
-
-  return rows
-    .map((row) => ({ ...row, value: formatRecordValue(row.value) }))
-    .filter((row) => row.value !== "-");
+  ]);
 }
 
 function level1Label(record: DatasetRecord) {
@@ -273,7 +280,17 @@ function level2NodeId(theme: string, category: string) {
   return `level2-${theme}-${category}`;
 }
 
-function searchText(record: DatasetRecord) {
+function dataMapSearchText(record: DatasetRecord) {
+  return [
+    record.name,
+    record.description,
+    ...record.keywords,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function detailSearchText(record: DatasetRecord) {
   return [
     record.name,
     record.originalName,
@@ -299,29 +316,47 @@ function searchText(record: DatasetRecord) {
     .toLowerCase();
 }
 
-function matches(record: DatasetRecord, query: string) {
+function matchesText(record: DatasetRecord, query: string, getText: (record: DatasetRecord) => string) {
   const normalized = query.trim().toLowerCase();
-  return !normalized || searchText(record).includes(normalized);
+  return !normalized || getText(record).includes(normalized);
+}
+
+function matchesDataMapSearch(record: DatasetRecord, query: string) {
+  return matchesText(record, query, dataMapSearchText);
+}
+
+function matchesDetailSearch(record: DatasetRecord, query: string) {
+  return matchesText(record, query, detailSearchText);
 }
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function highlightSearchTerm(value: string, query: string) {
+function highlightParts(value: string, query: string) {
   const term = query.trim();
-  if (!term) return value;
+  if (!term) return [{ text: value, isMatch: false }];
 
   const matcher = new RegExp(`(${escapeRegExp(term)})`, "gi");
   const normalizedTerm = term.toLowerCase();
 
-  return value.split(matcher).map((part, index) =>
-    part.toLowerCase() === normalizedTerm ? (
-      <mark className="search-highlight" key={`${part}-${index}`}>
-        {part}
+  return value
+    .split(matcher)
+    .filter((part) => part !== "")
+    .map((part) => ({
+      text: part,
+      isMatch: part.toLowerCase() === normalizedTerm,
+    }));
+}
+
+function highlightSearchTerm(value: string, query: string) {
+  return highlightParts(value, query).map((part, index) =>
+    part.isMatch ? (
+      <mark className="search-highlight" key={`${part.text}-${index}`}>
+        {part.text}
       </mark>
     ) : (
-      part
+      part.text
     ),
   );
 }
@@ -431,6 +466,29 @@ function summarizeRecords(records: DatasetRecord[]): RecordSummary {
   };
 }
 
+function summaryTooltip(label: string, summary: RecordSummary) {
+  return [
+    label,
+    `데이터 ${formatNumber(summary.count)}건`,
+    `파일 ${formatNumber(summary.files)} · API ${formatNumber(summary.apis)}`,
+    summary.keywords.length ? `대표 키워드 ${summary.keywords.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function recordTooltip(record: DatasetRecord) {
+  return [
+    record.name,
+    kindDisplay(record),
+    `${level1Label(record)} > ${level2Label(record)}`,
+    `확장자 ${extensionLabel(record)}`,
+    record.keywords.length ? `키워드 ${record.keywords.slice(0, 6).join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function shortLabel(label: string, max = 12) {
   return label.length > max ? `${label.slice(0, max - 1)}...` : label;
 }
@@ -502,6 +560,14 @@ function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
           <path d="m20 20-6-6" />
         </svg>
       );
+    case "help":
+      return (
+        <svg {...iconProps}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9.75 9a2.35 2.35 0 0 1 4.5 1c0 1.5-1.5 2-2.25 2.75" />
+          <path d="M12 17h.01" />
+        </svg>
+      );
     case "home":
       return (
         <svg {...iconProps}>
@@ -550,18 +616,22 @@ function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
 function NetworkGraph({
   center,
   items,
+  labelHighlightTerm,
   onNodeClick,
   registerControls,
   selectedNodeId,
 }: {
   center: GraphItem;
   items: GraphItem[];
+  labelHighlightTerm: string;
   onNodeClick: (item: GraphItem) => void;
   registerControls: (controls: GraphControls | null) => void;
   selectedNodeId?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const graphOffsetRef = useRef({ x: 0, y: 0 });
+  const labelHighlightTermRef = useRef(labelHighlightTerm);
   const movedRecordPositionsRef = useRef(new Map<string, { angle: number; x: number; y: number }>());
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -591,11 +661,14 @@ function NetworkGraph({
     const height = size.height;
     const centerX = width / 2;
     const centerY = height / 2;
+    const graphOffset = graphOffsetRef.current;
+    const graphCenterX = centerX + graphOffset.x;
+    const graphCenterY = centerY + graphOffset.y;
     const orbitRadius = Math.min(width, height) * 0.32;
-    const level1Radius = Math.min(Math.max(orbitRadius * 0.82, 130), 210);
-    const level2Radius = level1Radius * 2;
+    const level1Radius = Math.min(Math.max(orbitRadius * 0.98, 174), 250);
+    const level2Radius = level1Radius * 1.9;
     const recordRadius = level2Radius + Math.min(Math.max(level1Radius * 0.72, 105), 150);
-    const compactRecordAngleStep = 16 / Math.max(recordRadius, 1);
+    const compactRecordAngleStep = 24 / Math.max(recordRadius, 1);
     const level1Items = items.filter((item) => item.kind === "level1");
     const itemsById = new Map(items.map((item) => [item.id, item]));
     const level2ItemsByParent = new Map<string, GraphItem[]>();
@@ -683,8 +756,8 @@ function NetworkGraph({
             : level1Radius;
 
       return {
-        x: centerX + Math.cos(angle) * radius,
-        y: centerY + Math.sin(angle) * radius,
+        x: graphCenterX + Math.cos(angle) * radius,
+        y: graphCenterY + Math.sin(angle) * radius,
         angle,
       };
     };
@@ -698,10 +771,10 @@ function NetworkGraph({
         radius: center.radius,
         kind: "center",
         isCenter: true,
-        x: centerX,
-        y: centerY,
-        targetX: centerX,
-        targetY: centerY,
+        x: graphCenterX,
+        y: graphCenterY,
+        targetX: graphCenterX,
+        targetY: graphCenterY,
         angle: 0,
       },
       ...items.map((item) => {
@@ -719,6 +792,7 @@ function NetworkGraph({
           color: item.color,
           radius: item.radius,
           kind: item.kind,
+          tooltip: item.tooltip,
           parentId: item.parentId,
           targetX: x,
           targetY: y,
@@ -737,6 +811,31 @@ function NetworkGraph({
     );
     for (const recordId of movedRecordPositionsRef.current.keys()) {
       if (!visibleRecordIds.has(recordId)) movedRecordPositionsRef.current.delete(recordId);
+    }
+
+    const recordsByParent = new Map<string, GraphNode[]>();
+    for (const graphNode of graphNodes) {
+      if (graphNode.kind !== "record" || !graphNode.parentId) continue;
+      const group = recordsByParent.get(graphNode.parentId) ?? [];
+      group.push(graphNode);
+      recordsByParent.set(graphNode.parentId, group);
+    }
+
+    const labelLanePattern = [0, -1, 1, -2, 2, -3, 3];
+    for (const records of recordsByParent.values()) {
+      const lastArcByLane = new Map<number, number>();
+      records
+        .sort((recordA, recordB) => recordA.angle - recordB.angle)
+        .forEach((record) => {
+          const arcPosition = record.angle * recordRadius;
+          const lane =
+            labelLanePattern.find((candidate) => {
+              const lastArc = lastArcByLane.get(candidate);
+              return lastArc === undefined || arcPosition - lastArc >= 22;
+            }) ?? 0;
+          record.labelLane = lane;
+          lastArcByLane.set(lane, arcPosition);
+        });
     }
 
     const graphLinks: GraphLink[] = items.map((item) => ({
@@ -779,6 +878,8 @@ function NetworkGraph({
           .join(" "),
       );
 
+    node.append("title").text((d) => d.tooltip || `${d.label}\n${d.countLabel}`);
+
     node
       .filter((d) => d.kind === "record")
       .append("circle")
@@ -793,24 +894,95 @@ function NetworkGraph({
 
     const bubbleNode = node.filter((d) => d.kind !== "record");
     const recordNode = node.filter((d) => d.kind === "record");
+    let draggedRecordId = "";
+    const isDraggedRecord = (d: GraphNode) => d.kind === "record" && d.id === draggedRecordId;
+    const isFlippedRecordLabel = (d: GraphNode) => {
+      const angle = (d.angle * 180) / Math.PI;
+      return angle > 90 || angle < -90;
+    };
     const recordLabelRotation = (d: GraphNode) => {
+      if (isDraggedRecord(d)) return 0;
       const angle = (d.angle * 180) / Math.PI;
       return angle > 90 || angle < -90 ? angle + 180 : angle;
     };
     const recordLabelX = (d: GraphNode) => {
-      const angle = (d.angle * 180) / Math.PI;
-      return angle > 90 || angle < -90 ? -12 : 12;
+      if (isDraggedRecord(d)) return (d.x ?? d.targetX) > centerX ? -13 : 13;
+      return isFlippedRecordLabel(d) ? -12 : 12;
     };
     const recordLabelAnchor = (d: GraphNode) => {
-      const angle = (d.angle * 180) / Math.PI;
-      return angle > 90 || angle < -90 ? "end" : "start";
+      if (isDraggedRecord(d)) return (d.x ?? d.targetX) > centerX ? "end" : "start";
+      return isFlippedRecordLabel(d) ? "end" : "start";
+    };
+    const recordLabelDy = (d: GraphNode) => {
+      if (isDraggedRecord(d)) return "0.35em";
+      return `${0.35 + (d.labelLane ?? 0) * 0.95}em`;
+    };
+    const recordLabelText = (d: GraphNode) => {
+      return isDraggedRecord(d) ? shortLabel(d.label, 40) : shortLabel(d.label, 28);
+    };
+    const renderHighlightedSvgText = (
+      textSelection: d3.Selection<SVGTextElement, GraphNode, SVGGElement, unknown>,
+      getText: (d: GraphNode) => string,
+    ) => {
+      textSelection.each(function renderTextParts(d) {
+        const textElement = d3.select(this);
+        textElement.selectAll("tspan").remove();
+
+        for (const part of highlightParts(getText(d), labelHighlightTermRef.current)) {
+          const tspan = textElement.append("tspan").text(part.text);
+          if (part.isMatch) tspan.attr("class", "d3-label-highlight");
+        }
+
+        const parent = this.parentElement;
+        if (!(parent instanceof SVGElement)) return;
+
+        parent
+          .querySelectorAll(".d3-label-highlight-bg")
+          .forEach((element) => element.remove());
+        parent
+          .querySelectorAll(".d3-label-click-target")
+          .forEach((element) => element.remove());
+
+        try {
+          const textBox = this.getBBox();
+          const clickTarget = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          clickTarget.setAttribute("class", "d3-label-click-target");
+          clickTarget.setAttribute("x", String(textBox.x - 8));
+          clickTarget.setAttribute("y", String(textBox.y - 4));
+          clickTarget.setAttribute("width", String(textBox.width + 16));
+          clickTarget.setAttribute("height", String(textBox.height + 8));
+          clickTarget.setAttribute("rx", "4");
+          parent.insertBefore(clickTarget, this);
+        } catch {
+          // Ignore labels that are not measurable during SVG layout updates.
+        }
+
+        textElement
+          .selectAll<SVGTSpanElement, unknown>("tspan.d3-label-highlight")
+          .each(function drawHighlightBackground() {
+            try {
+              const box = this.getBBox();
+              const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+              background.setAttribute("class", "d3-label-highlight-bg");
+              background.setAttribute("x", String(box.x - 2.5));
+              background.setAttribute("y", String(box.y + 1));
+              background.setAttribute("width", String(box.width + 5));
+              background.setAttribute("height", String(Math.max(box.height - 2, 8)));
+              background.setAttribute("rx", "2");
+              parent.insertBefore(background, this.parentElement);
+            } catch {
+              // Ignore labels that are not measurable during SVG layout updates.
+            }
+          });
+      });
     };
 
-    bubbleNode
+    const bubbleLabelGroup = bubbleNode.append("g").attr("class", "d3-node-label-group");
+    const bubbleLabel = bubbleLabelGroup
       .append("text")
       .attr("class", "d3-node-label")
-      .attr("dy", "-0.15em")
-      .text((d) => shortLabel(d.label, 12));
+      .attr("dy", "-0.15em");
+    renderHighlightedSvgText(bubbleLabel, (d) => shortLabel(d.label, 12));
 
     bubbleNode
       .append("text")
@@ -818,24 +990,34 @@ function NetworkGraph({
       .attr("dy", "1.35em")
       .text((d) => d.countLabel);
 
-    recordNode
+    const recordLabelGroup = recordNode
+      .append("g")
+      .attr("class", "d3-record-label-group")
+      .attr("transform", (d) => `rotate(${recordLabelRotation(d)})`);
+
+    const recordLabel = recordLabelGroup
       .append("text")
       .attr("class", "d3-record-label")
-      .attr("dy", "0.35em")
+      .attr("dy", recordLabelDy)
       .attr("x", recordLabelX)
-      .attr("text-anchor", recordLabelAnchor)
-      .attr("transform", (d) => `rotate(${recordLabelRotation(d)})`)
-      .text((d) => shortLabel(d.label, 28));
+      .attr("text-anchor", recordLabelAnchor);
+    renderHighlightedSvgText(recordLabel, recordLabelText);
 
     const updateRecordLabelOrientation = () => {
       recordNode
-        .select<SVGTextElement>(".d3-record-label")
-        .attr("x", recordLabelX)
-        .attr("text-anchor", recordLabelAnchor)
+        .select<SVGGElement>(".d3-record-label-group")
         .attr("transform", (d) => `rotate(${recordLabelRotation(d)})`);
+
+      const recordLabels = recordNode
+        .select<SVGTextElement>(".d3-record-label")
+        .attr("dy", recordLabelDy)
+        .attr("x", recordLabelX)
+        .attr("text-anchor", recordLabelAnchor);
+      renderHighlightedSvgText(recordLabels, recordLabelText);
     };
 
     const nodeById = new Map(graphNodes.map((graphNode) => [graphNode.id, graphNode]));
+
     const childrenByParent = new Map<string, GraphNode[]>();
     for (const graphNode of graphNodes) {
       if (!graphNode.parentId) continue;
@@ -870,14 +1052,18 @@ function NetworkGraph({
       return ancestors;
     };
     const setDragFocus = (graphNode: GraphNode) => {
-      const focusIds = new Set<string>([graphNode.id]);
+      const focusIds = new Set<string>(
+        graphNode.isCenter ? graphNodes.map((candidate) => candidate.id) : [graphNode.id],
+      );
 
-      for (const descendant of collectDescendants(graphNode.id)) {
-        focusIds.add(descendant.id);
-      }
+      if (!graphNode.isCenter) {
+        for (const descendant of collectDescendants(graphNode.id)) {
+          focusIds.add(descendant.id);
+        }
 
-      for (const ancestor of collectAncestors(graphNode)) {
-        focusIds.add(ancestor.id);
+        for (const ancestor of collectAncestors(graphNode)) {
+          focusIds.add(ancestor.id);
+        }
       }
 
       layer.classed("dragging", true);
@@ -912,25 +1098,66 @@ function NetworkGraph({
     };
 
     let didDrag = false;
+    let dragStartPosition = { x: 0, y: 0 };
+    let suppressNextClick = false;
+    const clickDragThreshold = 5;
+    const graphItemFromNode = (d: GraphNode): GraphItem => ({
+      id: d.id,
+      kind: d.kind,
+      label: d.label,
+      countLabel: d.countLabel,
+      color: d.color,
+      radius: d.radius,
+      parentId: d.parentId,
+      isEmpty: d.isEmpty,
+      theme: d.theme,
+      categoryLevel2: d.categoryLevel2,
+      recordId: d.recordId,
+    });
+    const openGraphNode = (d: GraphNode) => {
+      if (d.isCenter) return;
+      onNodeClick(graphItemFromNode(d));
+    };
+    const suppressClickOnce = () => {
+      suppressNextClick = true;
+      window.setTimeout(() => {
+        suppressNextClick = false;
+      }, 80);
+    };
 
     const drag = d3
       .drag<SVGGElement, GraphNode>()
       .on("start", (event, d) => {
         didDrag = false;
+        dragStartPosition = { x: event.x, y: event.y };
         setDragFocus(d);
+        if (d.kind === "record") {
+          draggedRecordId = d.id;
+          node.classed("drag-source", (candidate) => candidate.id === d.id);
+          node.filter((candidate) => candidate.id === d.id).raise();
+          updateRecordLabelOrientation();
+        }
       })
       .on("drag", (event, d) => {
+        const dragDistance = Math.hypot(
+          event.x - dragStartPosition.x,
+          event.y - dragStartPosition.y,
+        );
+        if (!didDrag && dragDistance < clickDragThreshold) return;
+
         didDrag = true;
         const previousX = d.x ?? d.targetX;
         const previousY = d.y ?? d.targetY;
         const deltaX = event.x - previousX;
         const deltaY = event.y - previousY;
-        const descendants = d.kind === "level2" ? collectDescendants(d.id) : [];
-        d.x = event.x;
-        d.y = event.y;
-        for (const descendant of descendants) {
-          descendant.x = (descendant.x ?? descendant.targetX) + deltaX;
-          descendant.y = (descendant.y ?? descendant.targetY) + deltaY;
+        const movedNodes =
+          d.kind === "center"
+            ? graphNodes
+            : [d, ...(d.kind === "level2" ? collectDescendants(d.id) : [])];
+
+        for (const movedNode of movedNodes) {
+          movedNode.x = (movedNode.x ?? movedNode.targetX) + deltaX;
+          movedNode.y = (movedNode.y ?? movedNode.targetY) + deltaY;
         }
 
         if (d.kind === "record") {
@@ -941,6 +1168,45 @@ function NetworkGraph({
         renderPositions();
       })
       .on("end", (_event, d) => {
+        if (!didDrag) {
+          draggedRecordId = "";
+          node.classed("drag-source", false);
+          updateRecordLabelOrientation();
+          clearDragFocus();
+          suppressClickOnce();
+          openGraphNode(d);
+          window.setTimeout(() => {
+            didDrag = false;
+          }, 0);
+          return;
+        }
+
+        if (d.kind === "center") {
+          graphOffsetRef.current = {
+            x: (d.x ?? d.targetX) - centerX,
+            y: (d.y ?? d.targetY) - centerY,
+          };
+
+          for (const graphNode of graphNodes) {
+            graphNode.targetX = graphNode.x ?? graphNode.targetX;
+            graphNode.targetY = graphNode.y ?? graphNode.targetY;
+
+            if (
+              graphNode.kind !== "record" ||
+              !movedRecordPositionsRef.current.has(graphNode.id)
+            ) {
+              continue;
+            }
+
+            movedRecordPositionsRef.current.set(graphNode.id, {
+              angle: graphNode.angle,
+              x: graphNode.targetX,
+              y: graphNode.targetY,
+            });
+          }
+          renderPositions();
+        }
+
         if (d.kind === "record") {
           d.targetX = d.x ?? d.targetX;
           d.targetY = d.y ?? d.targetY;
@@ -950,9 +1216,11 @@ function NetworkGraph({
             x: d.targetX,
             y: d.targetY,
           });
-          updateRecordLabelOrientation();
           renderPositions();
         }
+        draggedRecordId = "";
+        node.classed("drag-source", false);
+        updateRecordLabelOrientation();
         clearDragFocus();
         window.setTimeout(() => {
           didDrag = false;
@@ -963,23 +1231,9 @@ function NetworkGraph({
 
     node.on("click", (event, d) => {
       event.stopPropagation();
+      if (suppressNextClick) return;
       if (didDrag) return;
-      if (d.isCenter) {
-        return;
-      }
-      onNodeClick({
-        id: d.id,
-        kind: d.kind,
-        label: d.label,
-        countLabel: d.countLabel,
-        color: d.color,
-        radius: d.radius,
-        parentId: d.parentId,
-        isEmpty: d.isEmpty,
-        theme: d.theme,
-        categoryLevel2: d.categoryLevel2,
-        recordId: d.recordId,
-      });
+      openGraphNode(d);
     });
 
     const zoom = d3
@@ -1060,12 +1314,26 @@ function NetworkGraph({
     };
 
     const resetGraph = () => {
+      graphOffsetRef.current = { x: 0, y: 0 };
       movedRecordPositionsRef.current.clear();
       graphNodes.forEach((d) => {
-        if (d.kind !== "record") return;
         const item = itemsById.get(d.id);
-        if (!item) return;
-        const target = targetForItem(item);
+        const angle = item ? angleForItem(item) : 0;
+        const radius =
+          item?.kind === "record"
+            ? recordRadius
+            : item?.kind === "level2"
+              ? level2Radius
+              : item?.kind === "level1"
+                ? level1Radius
+                : 0;
+        const target = item
+          ? {
+              angle,
+              x: centerX + Math.cos(angle) * radius,
+              y: centerY + Math.sin(angle) * radius,
+            }
+          : { x: centerX, y: centerY, angle: 0 };
         d.targetX = target.x;
         d.targetY = target.y;
         d.angle = target.angle;
@@ -1102,6 +1370,77 @@ function NetworkGraph({
   ]);
 
   useEffect(() => {
+    labelHighlightTermRef.current = labelHighlightTerm;
+    if (!svgRef.current) return;
+
+    const renderTextParts = (element: SVGTextElement, value: string) => {
+      const textElement = d3.select(element);
+      textElement.selectAll("tspan").remove();
+
+      for (const part of highlightParts(value, labelHighlightTerm)) {
+        const tspan = textElement.append("tspan").text(part.text);
+        if (part.isMatch) tspan.attr("class", "d3-label-highlight");
+      }
+
+      const parent = element.parentElement;
+      if (!(parent instanceof SVGElement)) return;
+
+      parent
+        .querySelectorAll(".d3-label-highlight-bg")
+        .forEach((highlightElement) => highlightElement.remove());
+      parent
+        .querySelectorAll(".d3-label-click-target")
+        .forEach((targetElement) => targetElement.remove());
+
+      try {
+        const textBox = element.getBBox();
+        const clickTarget = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        clickTarget.setAttribute("class", "d3-label-click-target");
+        clickTarget.setAttribute("x", String(textBox.x - 8));
+        clickTarget.setAttribute("y", String(textBox.y - 4));
+        clickTarget.setAttribute("width", String(textBox.width + 16));
+        clickTarget.setAttribute("height", String(textBox.height + 8));
+        clickTarget.setAttribute("rx", "4");
+        parent.insertBefore(clickTarget, element);
+      } catch {
+        // Ignore labels that are not measurable during SVG layout updates.
+      }
+
+      textElement
+        .selectAll<SVGTSpanElement, unknown>("tspan.d3-label-highlight")
+        .each(function drawHighlightBackground() {
+          try {
+            const box = this.getBBox();
+            const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            background.setAttribute("class", "d3-label-highlight-bg");
+            background.setAttribute("x", String(box.x - 2.5));
+            background.setAttribute("y", String(box.y + 1));
+            background.setAttribute("width", String(box.width + 5));
+            background.setAttribute("height", String(Math.max(box.height - 2, 8)));
+            background.setAttribute("rx", "2");
+            parent.insertBefore(background, element);
+          } catch {
+            // Ignore labels that are not measurable during SVG layout updates.
+          }
+        });
+    };
+
+    d3.select(svgRef.current)
+      .selectAll<SVGTextElement, GraphNode>(".d3-node-label")
+      .each(function updateBubbleLabel(d) {
+        renderTextParts(this, shortLabel(d.label, 12));
+      });
+
+    d3.select(svgRef.current)
+      .selectAll<SVGTextElement, GraphNode>(".d3-record-label")
+      .each(function updateRecordLabel(d) {
+        const nodeElement = this.closest(".d3-node");
+        const isDragSource = nodeElement?.classList.contains("drag-source") ?? false;
+        renderTextParts(this, shortLabel(d.label, isDragSource ? 40 : 28));
+      });
+  }, [labelHighlightTerm]);
+
+  useEffect(() => {
     if (!svgRef.current) return;
 
     d3.select(svgRef.current)
@@ -1131,11 +1470,13 @@ export function DataMapClient() {
   const [selectedTheme, setSelectedTheme] = useState("");
   const [selectedCategoryLevel2, setSelectedCategoryLevel2] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const [recordViewMode, setRecordViewMode] = useState<RecordViewMode>("network");
   const sortKey: SortKey = "views";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailQuery, setDetailQuery] = useState("");
   const [datasetPage, setDatasetPage] = useState(0);
   const graphControls = useRef<GraphControls | null>(null);
+  const urlStateAppliedRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -1165,6 +1506,30 @@ export function DataMapClient() {
     };
   }, []);
 
+  useEffect(() => {
+    if (urlStateAppliedRef.current) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const nextKind = params.get("kind");
+    const nextView = params.get("view");
+    const nextTheme = params.get("theme") ?? "";
+    const nextCategory = params.get("category") ?? "";
+    const nextRecord = params.get("record") ?? "";
+
+    setQuery(params.get("q") ?? "");
+    if (nextKind === "api" || nextKind === "file" || nextKind === "all") {
+      setActiveKind(nextKind);
+    }
+    setActiveExtension(params.get("extension") ?? "all");
+    setDetailQuery(params.get("detail") ?? "");
+    if (nextView === "list" || nextView === "network") setRecordViewMode(nextView);
+    setSelectedTheme(nextTheme);
+    setSelectedCategoryLevel2(nextCategory);
+    setSelectedId(nextRecord);
+    setDetailsOpen(Boolean(nextTheme || nextCategory || nextRecord));
+    urlStateAppliedRef.current = true;
+  }, []);
+
   const sourceSnapshot = dataCatalog?.source ?? emptySource;
   const datasets = useMemo(() => dataCatalog?.datasets ?? [], [dataCatalog]);
   const catalogSummary = useMemo(() => summarizeCatalog(datasets), [datasets]);
@@ -1178,7 +1543,7 @@ export function DataMapClient() {
       const kindMatch = activeKind === "all" || record.kind === activeKind;
       const extensionMatch =
         activeExtension === "all" || extensionLabel(record) === activeExtension;
-      return kindMatch && extensionMatch && matches(record, query);
+      return kindMatch && extensionMatch && matchesDataMapSearch(record, query);
     });
   }, [activeExtension, activeKind, query, datasets]);
 
@@ -1193,7 +1558,7 @@ export function DataMapClient() {
         color: palette[index % palette.length],
       };
     });
-  }, [baseRecords]);
+  }, [baseRecords, themeOrder]);
 
   const selectedScopeRecords = useMemo(() => {
     if (!selectedTheme) return baseRecords;
@@ -1211,7 +1576,7 @@ export function DataMapClient() {
   }, [selectedScopeRecords, sortKey]);
 
   const detailRecords = useMemo(() => {
-    return selectedRecords.filter((record) => matches(record, detailQuery));
+    return selectedRecords.filter((record) => matchesDetailSearch(record, detailQuery));
   }, [detailQuery, selectedRecords]);
   const datasetPageSize = 10;
   const datasetPageCount = Math.max(Math.ceil(detailRecords.length / datasetPageSize), 1);
@@ -1236,6 +1601,34 @@ export function DataMapClient() {
   const activeSelectedId = baseRecords.some((record) => record.id === selectedId)
     ? selectedId
     : "";
+
+  useEffect(() => {
+    if (!urlStateAppliedRef.current) return;
+
+    const params = new URLSearchParams();
+    if (query.trim()) params.set("q", query.trim());
+    if (activeKind !== "all") params.set("kind", activeKind);
+    if (activeExtension !== "all") params.set("extension", activeExtension);
+    if (selectedTheme) params.set("theme", selectedTheme);
+    if (selectedCategoryLevel2) params.set("category", selectedCategoryLevel2);
+    if (activeSelectedId) params.set("record", activeSelectedId);
+    if (detailQuery.trim()) params.set("detail", detailQuery.trim());
+    if (recordViewMode !== "network") params.set("view", recordViewMode);
+
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) window.history.replaceState(null, "", nextUrl);
+  }, [
+    activeExtension,
+    activeKind,
+    activeSelectedId,
+    detailQuery,
+    query,
+    recordViewMode,
+    selectedCategoryLevel2,
+    selectedTheme,
+  ]);
 
   const selectedRecord =
     detailRecords.find((record) => record.id === activeSelectedId) ??
@@ -1291,6 +1684,11 @@ export function DataMapClient() {
       countLabel: formatNumber(visibleTotals.total),
       color: centerNodeColor,
       radius: 72,
+      tooltip: [
+        query.trim() || "데이터현황",
+        `데이터 ${formatNumber(visibleTotals.total)}건`,
+        `파일 ${formatNumber(visibleTotals.files)} · API ${formatNumber(visibleTotals.apis)}`,
+      ].join("\n"),
     };
     const level1Items: GraphItem[] = themeStats.map((stat) => ({
       id: level1NodeId(stat.theme),
@@ -1299,6 +1697,7 @@ export function DataMapClient() {
       countLabel: stat.count ? formatNumber(stat.count) : "-",
       color: stat.color,
       radius: branchNodeRadius,
+      tooltip: summaryTooltip(stat.theme, stat),
       isEmpty: stat.count === 0,
       theme: stat.theme,
     }));
@@ -1322,40 +1721,48 @@ export function DataMapClient() {
             ([categoryA, recordsA], [categoryB, recordsB]) =>
               recordsB.length - recordsA.length || categoryA.localeCompare(categoryB, "ko-KR"),
           )
-          .map<GraphItem>(([category, recordsInGroup], index) => ({
-            id: level2NodeId(selectedTheme, category),
-            kind: "level2",
-            label: category,
-            countLabel: formatNumber(recordsInGroup.length),
-            color: palette[(themeIndex + index + 1) % palette.length],
-            radius: level2NodeRadius,
-            parentId: level1NodeId(selectedTheme),
-            theme: selectedTheme,
-            categoryLevel2: category,
-          })),
+          .map<GraphItem>(([category, recordsInGroup], index) => {
+            const summary = summarizeRecords(recordsInGroup);
+
+            return {
+              id: level2NodeId(selectedTheme, category),
+              kind: "level2",
+              label: category,
+              countLabel: formatNumber(recordsInGroup.length),
+              color: palette[(themeIndex + index + 1) % palette.length],
+              radius: level2NodeRadius,
+              tooltip: summaryTooltip(`${selectedTheme} > ${category}`, summary),
+              parentId: level1NodeId(selectedTheme),
+              theme: selectedTheme,
+              categoryLevel2: category,
+            };
+          }),
       );
 
       const datasetItems = [...records].sort(compareRecords(sortKey));
 
-      items.push(
-        ...datasetItems.map<GraphItem>((record) => {
-          const category = level2Label(record);
+      if (recordViewMode === "network") {
+        items.push(
+          ...datasetItems.map<GraphItem>((record) => {
+            const category = level2Label(record);
 
-          return {
-            id: `record-${record.id}`,
-            kind: "record",
-            label: record.name,
-            countLabel:
-              record.kind === "api" ? "API" : record.extension || record.format || "FILE",
-            color: record.kind === "api" ? "#2563eb" : "#059669",
-            radius: recordDotRadius,
-            parentId: level2NodeId(selectedTheme, category),
-            theme: level1Label(record),
-            categoryLevel2: category,
-            recordId: record.id,
-          };
-        }),
-      );
+            return {
+              id: `record-${record.id}`,
+              kind: "record",
+              label: record.name,
+              countLabel:
+                record.kind === "api" ? "API" : record.extension || record.format || "FILE",
+              color: record.kind === "api" ? "#2563eb" : "#059669",
+              radius: recordDotRadius,
+              tooltip: recordTooltip(record),
+              parentId: level2NodeId(selectedTheme, category),
+              theme: level1Label(record),
+              categoryLevel2: category,
+              recordId: record.id,
+            };
+          }),
+        );
+      }
     }
 
     return {
@@ -1365,10 +1772,13 @@ export function DataMapClient() {
   }, [
     baseRecords,
     query,
+    recordViewMode,
     selectedTheme,
     sortKey,
     themeStats,
     themeOrder,
+    visibleTotals.apis,
+    visibleTotals.files,
     visibleTotals.total,
   ]);
   const selectedGraphNodeId = selectedId
@@ -1387,7 +1797,6 @@ export function DataMapClient() {
     setSelectedTheme(theme);
     setSelectedCategoryLevel2("");
     setSelectedId("");
-    setDetailQuery("");
     setDatasetPage(0);
     setDetailsOpen(true);
   }, []);
@@ -1396,21 +1805,16 @@ export function DataMapClient() {
     setSelectedTheme(theme);
     setSelectedCategoryLevel2(category);
     setSelectedId("");
-    setDetailQuery("");
     setDatasetPage(0);
     setDetailsOpen(true);
   }, []);
 
-  const chooseRecord = useCallback(
-    (record: DatasetRecord, options?: { clearDetailQuery?: boolean }) => {
-      setSelectedTheme(level1Label(record));
-      setSelectedCategoryLevel2(level2Label(record));
-      if (options?.clearDetailQuery) setDetailQuery("");
-      setSelectedId(record.id);
-      setDetailsOpen(true);
-    },
-    [],
-  );
+  const chooseRecord = useCallback((record: DatasetRecord) => {
+    setSelectedTheme(level1Label(record));
+    setSelectedCategoryLevel2(level2Label(record));
+    setSelectedId(record.id);
+    setDetailsOpen(true);
+  }, []);
 
   const handleGraphNodeClick = useCallback(
     (item: GraphItem) => {
@@ -1428,7 +1832,7 @@ export function DataMapClient() {
 
       if (item.kind === "record" && item.recordId) {
         const record = datasets.find((candidate) => candidate.id === item.recordId);
-        if (record) chooseRecord(record, { clearDetailQuery: true });
+        if (record) chooseRecord(record);
       }
     },
     [chooseCategoryLevel2, chooseRecord, chooseTheme, datasets],
@@ -1440,7 +1844,7 @@ export function DataMapClient() {
         const kindMatch = activeKind === "all" || record.kind === activeKind;
         const extensionMatch =
           activeExtension === "all" || extensionLabel(record) === activeExtension;
-        return kindMatch && extensionMatch && matches(record, term);
+        return kindMatch && extensionMatch && matchesDataMapSearch(record, term);
       },
     );
     const nextTheme =
@@ -1487,6 +1891,12 @@ export function DataMapClient() {
     setDatasetPage(0);
   }
 
+  function chooseRecordViewMode(mode: RecordViewMode) {
+    setRecordViewMode(mode);
+    if (mode === "list" && selectedTheme) setDetailsOpen(true);
+    window.setTimeout(() => graphControls.current?.fitAll(), 0);
+  }
+
   function resetSearchConditions() {
     setQuery("");
     setActiveKind("all");
@@ -1522,6 +1932,7 @@ export function DataMapClient() {
   const selectedRecordRows = isRecordDetail && selectedRecord ? recordInfoRows(selectedRecord) : [];
   const selectedPortalUrl = selectedRecord ? dataGoKrUrl(selectedRecord) : "";
   const isCatalogLoading = !dataCatalog && !catalogError;
+  const currentScopeSummary = useMemo(() => summarizeRecords(detailRecords), [detailRecords]);
 
   return (
     <main className="datamap-page">
@@ -1557,7 +1968,7 @@ export function DataMapClient() {
                 <option value="all">전체 확장자</option>
                 {extensionOptions.map((extension) => (
                   <option key={extension.name} value={extension.name}>
-                    {extension.name} ({formatNumber(extension.count)})
+                    {extension.name}
                   </option>
                 ))}
               </select>
@@ -1640,11 +2051,38 @@ export function DataMapClient() {
 
       <section className="map-workspace">
         <section className="network-shell" aria-label="공공데이터 네트워크 맵">
+          <div className="network-toolbar">
+            <div className="view-mode-toggle" aria-label="데이터셋 표시 방식">
+              <button
+                className={recordViewMode === "network" ? "active" : ""}
+                type="button"
+                onClick={() => chooseRecordViewMode("network")}
+              >
+                네트워크
+              </button>
+              <button
+                className={recordViewMode === "list" ? "active" : ""}
+                type="button"
+                onClick={() => chooseRecordViewMode("list")}
+              >
+                목록
+              </button>
+            </div>
+            <button
+              className="canvas-help-button"
+              type="button"
+              title="분류 노드를 클릭하면 하위 데이터가 표시됩니다."
+              aria-label="간단 도움말"
+            >
+              <Icon name="help" size={17} />
+            </button>
+          </div>
           {isCatalogLoading ? <div className="canvas-status">데이터를 불러오는 중입니다.</div> : null}
           {catalogError ? <div className="canvas-status error">{catalogError}</div> : null}
           <NetworkGraph
             center={graphData.center}
             items={graphData.items}
+            labelHighlightTerm={detailQuery}
             onNodeClick={handleGraphNodeClick}
             registerControls={registerGraphControls}
             selectedNodeId={selectedGraphNodeId}
@@ -1703,6 +2141,11 @@ export function DataMapClient() {
               <section className="dataset-list-section">
                 {detailRecords.length ? (
                   <>
+                    <div className="dataset-list-summary">
+                      <span>데이터 {formatNumber(currentScopeSummary.count)}</span>
+                      <span>파일 {formatNumber(currentScopeSummary.files)}</span>
+                      <span>API {formatNumber(currentScopeSummary.apis)}</span>
+                    </div>
                     <ol className="dataset-list">
                       {visibleDetailRecords.map((record, index) => (
                         <li key={record.id}>
