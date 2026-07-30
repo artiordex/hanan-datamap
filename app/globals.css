@@ -478,21 +478,54 @@ a {
 }
 
 .keyword-pager {
+  position: relative;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.keyword-pager.dragging {
+  cursor: grabbing;
+}
+
+.keyword-track {
+  display: grid;
+  grid-auto-columns: 100%;
+  grid-auto-flow: column;
+  align-items: center;
+  transform: translate3d(calc(-100% + var(--keyword-drag-offset, 0px)), 0, 0);
+  transition: none;
+  will-change: transform;
+}
+
+.keyword-track.sliding {
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.keyword-page {
   display: flex;
   min-width: 0;
   gap: 6px;
   overflow: hidden;
+  align-items: center;
+  padding: 0 1px;
+  white-space: nowrap;
 }
 
 .keyword-pager button {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 850;
+  user-select: none;
 }
 
 .keyword-pager button {
   flex: 0 0 auto;
   min-height: 28px;
+  min-width: 46px;
   max-width: 142px;
   overflow: hidden;
   border: 1px solid #d1d5db;
@@ -573,6 +606,11 @@ a {
 
 .d3-graph-layer.dragging .d3-link.drag-focus {
   stroke-opacity: 0.86;
+}
+
+.d3-link.empty,
+.d3-graph-layer.dragging .d3-link.empty {
+  stroke-opacity: 0.06;
 }
 
 .d3-node {
