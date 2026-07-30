@@ -562,6 +562,7 @@ function NetworkGraph({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const movedRecordPositionsRef = useRef(new Map<string, { angle: number; x: number; y: number }>());
   const [size, setSize] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
@@ -705,6 +706,11 @@ function NetworkGraph({
       },
       ...items.map((item) => {
         const target = targetForItem(item);
+        const movedPosition =
+          item.kind === "record" ? movedRecordPositionsRef.current.get(item.id) : undefined;
+        const x = movedPosition?.x ?? target.x;
+        const y = movedPosition?.y ?? target.y;
+        const angle = movedPosition?.angle ?? target.angle;
 
         return {
           id: item.id,
@@ -714,18 +720,24 @@ function NetworkGraph({
           radius: item.radius,
           kind: item.kind,
           parentId: item.parentId,
-          targetX: target.x,
-          targetY: target.y,
-          angle: target.angle,
+          targetX: x,
+          targetY: y,
+          angle,
           theme: item.theme,
           categoryLevel2: item.categoryLevel2,
           recordId: item.recordId,
           isEmpty: item.isEmpty,
-          x: target.x,
-          y: target.y,
+          x,
+          y,
         };
       }),
     ];
+    const visibleRecordIds = new Set(
+      items.filter((item) => item.kind === "record").map((item) => item.id),
+    );
+    for (const recordId of movedRecordPositionsRef.current.keys()) {
+      if (!visibleRecordIds.has(recordId)) movedRecordPositionsRef.current.delete(recordId);
+    }
 
     const graphLinks: GraphLink[] = items.map((item) => ({
       source: item.parentId ?? "__center",
@@ -880,51 +892,14 @@ function NetworkGraph({
       node.classed("drag-focus", false);
       link.classed("drag-focus", false);
     };
-    const findRecordSwapTarget = (graphNode: GraphNode) => {
-      if (graphNode.kind !== "record") return undefined;
-
-      let nearest: GraphNode | undefined;
-      let nearestDistance = 26;
-
-      for (const candidate of graphNodes) {
-        if (
-          candidate.kind !== "record" ||
-          candidate.id === graphNode.id ||
-          candidate.parentId !== graphNode.parentId
-        ) {
-          continue;
-        }
-
-        const deltaX = (graphNode.x ?? graphNode.targetX) - (candidate.x ?? candidate.targetX);
-        const deltaY = (graphNode.y ?? graphNode.targetY) - (candidate.y ?? candidate.targetY);
-        const distance = Math.hypot(deltaX, deltaY);
-
-        if (distance < nearestDistance) {
-          nearest = candidate;
-          nearestDistance = distance;
-        }
-      }
-
-      return nearest;
-    };
-    const swapRecordTargets = (source: GraphNode, target: GraphNode) => {
-      const sourceTarget = {
-        angle: source.angle,
-        x: source.targetX,
-        y: source.targetY,
-      };
-
-      source.angle = target.angle;
-      source.targetX = target.targetX;
-      source.targetY = target.targetY;
-
-      target.angle = sourceTarget.angle;
-      target.targetX = sourceTarget.x;
-      target.targetY = sourceTarget.y;
-      target.x = sourceTarget.x;
-      target.y = sourceTarget.y;
-
-      updateRecordLabelOrientation();
+    const updateRecordAngle = (graphNode: GraphNode) => {
+      const parent = graphNode.parentId ? nodeById.get(graphNode.parentId) : undefined;
+      const parentX = parent?.x ?? parent?.targetX ?? centerX;
+      const parentY = parent?.y ?? parent?.targetY ?? centerY;
+      graphNode.angle = Math.atan2(
+        (graphNode.y ?? graphNode.targetY) - parentY,
+        (graphNode.x ?? graphNode.targetX) - parentX,
+      );
     };
     const renderPositions = () => {
       link
@@ -958,17 +933,24 @@ function NetworkGraph({
           descendant.y = (descendant.y ?? descendant.targetY) + deltaY;
         }
 
-        const swapTarget = findRecordSwapTarget(d);
-        if (swapTarget) {
-          swapRecordTargets(d, swapTarget);
+        if (d.kind === "record") {
+          updateRecordAngle(d);
+          updateRecordLabelOrientation();
         }
 
         renderPositions();
       })
       .on("end", (_event, d) => {
         if (d.kind === "record") {
-          d.x = d.targetX;
-          d.y = d.targetY;
+          d.targetX = d.x ?? d.targetX;
+          d.targetY = d.y ?? d.targetY;
+          updateRecordAngle(d);
+          movedRecordPositionsRef.current.set(d.id, {
+            angle: d.angle,
+            x: d.targetX,
+            y: d.targetY,
+          });
+          updateRecordLabelOrientation();
           renderPositions();
         }
         clearDragFocus();
@@ -1078,8 +1060,19 @@ function NetworkGraph({
     };
 
     const resetGraph = () => {
-      svg.transition().duration(450).call(zoom.transform, d3.zoomIdentity);
+      movedRecordPositionsRef.current.clear();
+      graphNodes.forEach((d) => {
+        if (d.kind !== "record") return;
+        const item = itemsById.get(d.id);
+        if (!item) return;
+        const target = targetForItem(item);
+        d.targetX = target.x;
+        d.targetY = target.y;
+        d.angle = target.angle;
+      });
+      updateRecordLabelOrientation();
       restoreTargetPositions();
+      svg.transition().duration(450).call(zoom.transform, d3.zoomIdentity);
     };
 
     registerControls({
