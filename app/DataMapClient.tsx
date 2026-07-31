@@ -7,7 +7,6 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
-  type TransitionEvent as ReactTransitionEvent,
 } from "react";
 
 type KindFilter = "all" | DatasetKind;
@@ -381,17 +380,6 @@ function shuffledKeywords(records: DatasetRecord[], seed: string) {
         hashText(`${seed}-${keywordA}`) - hashText(`${seed}-${keywordB}`) ||
         keywordA.localeCompare(keywordB, "ko-KR"),
     );
-}
-
-function estimatedKeywordChipWidth(keyword: string) {
-  const textWidth = Array.from(keyword).reduce((total, character) => {
-    if (/\s/.test(character)) return total + 4;
-    if (/[\uAC00-\uD7A3]/.test(character)) return total + 13;
-    if (/[A-Z0-9]/.test(character)) return total + 8.5;
-    return total + 7.5;
-  }, 0);
-
-  return Math.min(Math.max(Math.ceil(textWidth + 25), 46), 142);
 }
 
 function compareRecords(sortKey: SortKey) {
@@ -1506,7 +1494,6 @@ export function DataMapClient() {
   const [query, setQuery] = useState("");
   const [activeKind, setActiveKind] = useState<KindFilter>("all");
   const [activeExtension, setActiveExtension] = useState("all");
-  const [keywordPage, setKeywordPage] = useState(0);
   const [selectedTheme, setSelectedTheme] = useState("");
   const [selectedCategoryLevel2, setSelectedCategoryLevel2] = useState("");
   const [selectedId, setSelectedId] = useState("");
@@ -1516,9 +1503,6 @@ export function DataMapClient() {
   const [detailQuery, setDetailQuery] = useState("");
   const [datasetPage, setDatasetPage] = useState(0);
   const [isKeywordDragging, setIsKeywordDragging] = useState(false);
-  const [isKeywordAnimating, setIsKeywordAnimating] = useState(false);
-  const [keywordDragOffset, setKeywordDragOffset] = useState(0);
-  const [keywordPagerWidth, setKeywordPagerWidth] = useState(0);
   const graphControls = useRef<GraphControls | null>(null);
   const urlStateAppliedRef = useRef(false);
   const keywordPagerRef = useRef<HTMLDivElement | null>(null);
@@ -1526,9 +1510,9 @@ export function DataMapClient() {
     pointerId: number;
     startX: number;
     startY: number;
+    scrollLeft: number;
     hasMoved: boolean;
   } | null>(null);
-  const keywordPendingDirectionRef = useRef(0);
   const suppressKeywordClickRef = useRef(false);
 
   useEffect(() => {
@@ -1581,25 +1565,6 @@ export function DataMapClient() {
     setSelectedId(nextRecord);
     setDetailsOpen(Boolean(nextTheme || nextCategory || nextRecord));
     urlStateAppliedRef.current = true;
-  }, []);
-
-  useEffect(() => {
-    const element = keywordPagerRef.current;
-    if (!element) return;
-
-    const updateWidth = () => {
-      setKeywordPagerWidth(Math.round(element.clientWidth));
-    };
-    updateWidth();
-
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateWidth);
-      return () => window.removeEventListener("resize", updateWidth);
-    }
-
-    const observer = new ResizeObserver(updateWidth);
-    observer.observe(element);
-    return () => observer.disconnect();
   }, []);
 
   const sourceSnapshot = dataCatalog?.source ?? emptySource;
@@ -1737,45 +1702,6 @@ export function DataMapClient() {
     () => shuffledKeywords(datasets, sourceSnapshot.generatedAt),
     [datasets, sourceSnapshot.generatedAt],
   );
-  const keywordPages = useMemo(() => {
-    const pageWidth = Math.max((keywordPagerWidth || 420) - 8, 120);
-    const gap = 6;
-    const pages: string[][] = [];
-    let currentPage: string[] = [];
-    let currentWidth = 0;
-
-    for (const keyword of keywordOptions) {
-      const chipWidth = estimatedKeywordChipWidth(keyword);
-      const nextWidth = currentPage.length ? currentWidth + gap + chipWidth : chipWidth;
-
-      if (currentPage.length && nextWidth > pageWidth) {
-        pages.push(currentPage);
-        currentPage = [keyword];
-        currentWidth = chipWidth;
-      } else {
-        currentPage.push(keyword);
-        currentWidth = nextWidth;
-      }
-    }
-
-    if (currentPage.length) pages.push(currentPage);
-    return pages.length ? pages : [[]];
-  }, [keywordOptions, keywordPagerWidth]);
-  const keywordPageCount = keywordPages.length;
-  const currentKeywordPage = keywordPage % keywordPageCount;
-  const previousKeywordPage = (currentKeywordPage - 1 + keywordPageCount) % keywordPageCount;
-  const nextKeywordPage = (currentKeywordPage + 1) % keywordPageCount;
-  const keywordSlidePages = [
-    { id: "previous", page: previousKeywordPage },
-    { id: "current", page: currentKeywordPage },
-    { id: "next", page: nextKeywordPage },
-  ].map((slide) => ({
-    ...slide,
-    keywords: keywordPages[slide.page] ?? [],
-  }));
-  const keywordTrackStyle = {
-    "--keyword-drag-offset": `${keywordDragOffset}px`,
-  } as CSSProperties;
 
   const graphData = useMemo<{
     center: GraphItem;
@@ -2005,63 +1931,50 @@ export function DataMapClient() {
     setQuery("");
     setActiveKind("all");
     setActiveExtension("all");
-    setKeywordPage(0);
     setSelectedTheme("");
     setSelectedCategoryLevel2("");
     setSelectedId("");
     setDetailQuery("");
     setDatasetPage(0);
     setDetailsOpen(false);
+    keywordPagerRef.current?.scrollTo({ left: 0, behavior: "smooth" });
     window.setTimeout(() => graphControls.current?.reset(), 0);
   }
 
-  function commitKeywordPageTurn(direction: number) {
-    setKeywordPage((page) => (page + direction + keywordPageCount) % keywordPageCount);
-    window.setTimeout(() => graphControls.current?.fitAll(), 0);
-  }
-
   function moveKeywordPage(direction: number) {
-    if (keywordPageCount <= 1 || isKeywordAnimating || isKeywordDragging) return;
+    const element = keywordPagerRef.current;
+    if (!element || isKeywordDragging) return;
 
-    const width = keywordPagerRef.current?.clientWidth ?? 0;
-    if (!width) {
-      commitKeywordPageTurn(direction);
-      return;
-    }
+    const maxScrollLeft = element.scrollWidth - element.clientWidth;
+    if (maxScrollLeft <= 0) return;
 
-    keywordPendingDirectionRef.current = direction;
-    setIsKeywordAnimating(true);
-    setKeywordDragOffset(direction > 0 ? -width : width);
-  }
-
-  function finishKeywordSlide(event: ReactTransitionEvent<HTMLDivElement>) {
-    if (event.target !== event.currentTarget || event.propertyName !== "transform") return;
-
-    const direction = keywordPendingDirectionRef.current;
-    keywordPendingDirectionRef.current = 0;
-    if (direction) commitKeywordPageTurn(direction);
-    setIsKeywordAnimating(false);
-    setKeywordDragOffset(0);
+    const step = Math.max(element.clientWidth * 0.78, 220);
+    element.scrollTo({
+      left: Math.min(Math.max(element.scrollLeft + step * direction, 0), maxScrollLeft),
+      behavior: "smooth",
+    });
   }
 
   function suppressNextKeywordClick() {
     suppressKeywordClickRef.current = true;
     window.setTimeout(() => {
       suppressKeywordClickRef.current = false;
-    }, 0);
+    }, 90);
   }
 
   function startKeywordDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    if (keywordPageCount <= 1 || isKeywordAnimating || event.button !== 0) return;
+    if (event.button !== 0) return;
+
+    const element = event.currentTarget;
+    if (element.scrollWidth <= element.clientWidth) return;
 
     keywordDragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      scrollLeft: element.scrollLeft,
       hasMoved: false,
     };
-    setIsKeywordDragging(true);
-    event.currentTarget.setPointerCapture(event.pointerId);
   }
 
   function moveKeywordDrag(event: ReactPointerEvent<HTMLDivElement>) {
@@ -2070,13 +1983,16 @@ export function DataMapClient() {
 
     const deltaX = event.clientX - drag.startX;
     const deltaY = event.clientY - drag.startY;
-    if (Math.abs(deltaX) > 8 && Math.abs(deltaX) > Math.abs(deltaY)) {
-      drag.hasMoved = true;
+    if (Math.abs(deltaX) > 5 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      if (!drag.hasMoved) {
+        drag.hasMoved = true;
+        setIsKeywordDragging(true);
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
     }
     if (Math.abs(deltaX) > Math.abs(deltaY)) {
-      const width = event.currentTarget.clientWidth || 1;
-      const clampedX = Math.max(Math.min(deltaX, width * 0.96), -width * 0.96);
-      setKeywordDragOffset(clampedX);
+      event.preventDefault();
+      event.currentTarget.scrollLeft = drag.scrollLeft - deltaX;
     }
   }
 
@@ -2084,30 +2000,12 @@ export function DataMapClient() {
     const drag = keywordDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
 
-    const deltaX = event.clientX - drag.startX;
-    const deltaY = event.clientY - drag.startY;
-    const shouldTurnPage = Math.abs(deltaX) >= 46 && Math.abs(deltaX) > Math.abs(deltaY) * 1.15;
-    const width = event.currentTarget.clientWidth || 0;
-
     keywordDragRef.current = null;
     setIsKeywordDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-
-    if (shouldTurnPage && width) {
-      const direction = deltaX < 0 ? 1 : -1;
-      keywordPendingDirectionRef.current = direction;
-      setIsKeywordAnimating(true);
-      setKeywordDragOffset(direction > 0 ? -width : width);
-    } else if (drag.hasMoved) {
-      keywordPendingDirectionRef.current = 0;
-      setIsKeywordAnimating(true);
-      setKeywordDragOffset(0);
-    } else {
-      setKeywordDragOffset(0);
-    }
-    if (drag.hasMoved || shouldTurnPage) suppressNextKeywordClick();
+    if (drag.hasMoved) suppressNextKeywordClick();
   }
 
   function cancelKeywordDrag(event: ReactPointerEvent<HTMLDivElement>) {
@@ -2119,9 +2017,7 @@ export function DataMapClient() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    keywordPendingDirectionRef.current = 0;
-    setKeywordDragOffset(0);
-    setIsKeywordAnimating(drag.hasMoved);
+    if (drag.hasMoved) suppressNextKeywordClick();
   }
 
   function handleKeywordClick(keyword: string) {
@@ -2255,26 +2151,16 @@ export function DataMapClient() {
                 onPointerMove={moveKeywordDrag}
                 onPointerUp={finishKeywordDrag}
               >
-                <div
-                  className={`keyword-track${isKeywordAnimating ? " sliding" : ""}`}
-                  onTransitionEnd={finishKeywordSlide}
-                  style={keywordTrackStyle}
-                >
-                  {keywordSlidePages.map((slide) => (
-                    <div className="keyword-page" key={`${slide.id}-${slide.page}`}>
-                      {slide.keywords.map((keyword) => (
-                        <button
-                          className={query === keyword ? "active" : ""}
-                          key={keyword}
-                          type="button"
-                          onClick={() => handleKeywordClick(keyword)}
-                        >
-                          {keyword}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
+                {keywordOptions.map((keyword) => (
+                  <button
+                    className={query === keyword ? "active" : ""}
+                    key={keyword}
+                    type="button"
+                    onClick={() => handleKeywordClick(keyword)}
+                  >
+                    {keyword}
+                  </button>
+                ))}
               </div>
               <button type="button" onClick={() => moveKeywordPage(1)} aria-label="다음 키워드">
                 <Icon name="chevronRight" size={15} />
