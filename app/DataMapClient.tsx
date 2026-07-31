@@ -13,7 +13,6 @@ type KindFilter = "all" | DatasetKind;
 type SortKey = "views" | "downloads" | "applications" | "name";
 
 type DatasetKind = "file" | "api";
-type RecordViewMode = "network" | "list";
 
 type NamedCount = {
   name: string;
@@ -363,25 +362,6 @@ function highlightSearchTerm(value: string, query: string) {
   );
 }
 
-function hashText(value: string) {
-  let hash = 5381;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 33) ^ value.charCodeAt(index);
-  }
-
-  return hash >>> 0;
-}
-
-function shuffledKeywords(records: DatasetRecord[], seed: string) {
-  return keywordCounts(records, 120)
-    .map(({ name }) => name)
-    .sort(
-      (keywordA, keywordB) =>
-        hashText(`${seed}-${keywordA}`) - hashText(`${seed}-${keywordB}`) ||
-        keywordA.localeCompare(keywordB, "ko-KR"),
-    );
-}
-
 function compareRecords(sortKey: SortKey) {
   return (a: DatasetRecord, b: DatasetRecord) => {
     if (sortKey === "name") return a.name.localeCompare(b.name, "ko-KR");
@@ -433,6 +413,29 @@ function keywordCounts(records: DatasetRecord[], limit: number) {
 function topKeywords(records: DatasetRecord[]) {
   return keywordCounts(records, 6)
     .map(({ name }) => name);
+}
+
+function topKeywordsByViews(records: DatasetRecord[], limit = 10) {
+  const scores = new Map<string, { views: number; count: number }>();
+
+  for (const record of records) {
+    for (const keyword of record.keywords) {
+      const current = scores.get(keyword) ?? { views: 0, count: 0 };
+      current.views += record.views;
+      current.count += 1;
+      scores.set(keyword, current);
+    }
+  }
+
+  return [...scores.entries()]
+    .sort(
+      ([keywordA, scoreA], [keywordB, scoreB]) =>
+        scoreB.views - scoreA.views ||
+        scoreB.count - scoreA.count ||
+        keywordA.localeCompare(keywordB, "ko-KR"),
+    )
+    .slice(0, limit)
+    .map(([keyword]) => keyword);
 }
 
 function summarizeCatalog(records: DatasetRecord[]): CatalogSummary {
@@ -594,8 +597,8 @@ function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     case "rotateCcw":
       return (
         <svg {...iconProps}>
-          <path d="M3 7v6h6" />
-          <path d="M3 13a8 8 0 1 0 2.34-5.66L3 9.68" />
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
         </svg>
       );
     case "search":
@@ -931,7 +934,7 @@ function NetworkGraph({
         const textElement = d3.select(this);
         textElement.selectAll("tspan").remove();
 
-        for (const part of highlightParts(getText(d), labelHighlightTermRef.current)) {
+        for (const part of highlightParts(getText(d), d.kind === "level1" || d.kind === "center" ? "" : labelHighlightTermRef.current)) {
           const tspan = textElement.append("tspan").text(part.text);
           if (part.isMatch) tspan.attr("class", "d3-label-highlight");
         }
@@ -939,9 +942,6 @@ function NetworkGraph({
         const parent = this.parentElement;
         if (!(parent instanceof SVGElement)) return;
 
-        parent
-          .querySelectorAll(".d3-label-highlight-bg")
-          .forEach((element) => element.remove());
         parent
           .querySelectorAll(".d3-label-click-target")
           .forEach((element) => element.remove());
@@ -960,23 +960,6 @@ function NetworkGraph({
           // Ignore labels that are not measurable during SVG layout updates.
         }
 
-        textElement
-          .selectAll<SVGTSpanElement, unknown>("tspan.d3-label-highlight")
-          .each(function drawHighlightBackground() {
-            try {
-              const box = this.getBBox();
-              const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-              background.setAttribute("class", "d3-label-highlight-bg");
-              background.setAttribute("x", String(box.x - 2.5));
-              background.setAttribute("y", String(box.y + 1));
-              background.setAttribute("width", String(box.width + 5));
-              background.setAttribute("height", String(Math.max(box.height - 2, 8)));
-              background.setAttribute("rx", "2");
-              parent.insertBefore(background, this.parentElement);
-            } catch {
-              // Ignore labels that are not measurable during SVG layout updates.
-            }
-          });
       });
     };
 
@@ -1401,11 +1384,11 @@ function NetworkGraph({
     labelHighlightTermRef.current = labelHighlightTerm;
     if (!svgRef.current) return;
 
-    const renderTextParts = (element: SVGTextElement, value: string) => {
+    const renderTextParts = (element: SVGTextElement, value: string, term = labelHighlightTerm) => {
       const textElement = d3.select(element);
       textElement.selectAll("tspan").remove();
 
-      for (const part of highlightParts(value, labelHighlightTerm)) {
+      for (const part of highlightParts(value, term)) {
         const tspan = textElement.append("tspan").text(part.text);
         if (part.isMatch) tspan.attr("class", "d3-label-highlight");
       }
@@ -1413,9 +1396,6 @@ function NetworkGraph({
       const parent = element.parentElement;
       if (!(parent instanceof SVGElement)) return;
 
-      parent
-        .querySelectorAll(".d3-label-highlight-bg")
-        .forEach((highlightElement) => highlightElement.remove());
       parent
         .querySelectorAll(".d3-label-click-target")
         .forEach((targetElement) => targetElement.remove());
@@ -1434,29 +1414,12 @@ function NetworkGraph({
         // Ignore labels that are not measurable during SVG layout updates.
       }
 
-      textElement
-        .selectAll<SVGTSpanElement, unknown>("tspan.d3-label-highlight")
-        .each(function drawHighlightBackground() {
-          try {
-            const box = this.getBBox();
-            const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-            background.setAttribute("class", "d3-label-highlight-bg");
-            background.setAttribute("x", String(box.x - 2.5));
-            background.setAttribute("y", String(box.y + 1));
-            background.setAttribute("width", String(box.width + 5));
-            background.setAttribute("height", String(Math.max(box.height - 2, 8)));
-            background.setAttribute("rx", "2");
-            parent.insertBefore(background, element);
-          } catch {
-            // Ignore labels that are not measurable during SVG layout updates.
-          }
-        });
     };
 
     d3.select(svgRef.current)
       .selectAll<SVGTextElement, GraphNode>(".d3-node-label")
       .each(function updateBubbleLabel(d) {
-        renderTextParts(this, shortLabel(d.label, 12));
+        renderTextParts(this, shortLabel(d.label, 12), d.kind === "level1" || d.kind === "center" ? "" : labelHighlightTerm);
       });
 
     d3.select(svgRef.current)
@@ -1493,11 +1456,9 @@ export function DataMapClient() {
   const [catalogError, setCatalogError] = useState("");
   const [query, setQuery] = useState("");
   const [activeKind, setActiveKind] = useState<KindFilter>("all");
-  const [activeExtension, setActiveExtension] = useState("all");
   const [selectedTheme, setSelectedTheme] = useState("");
   const [selectedCategoryLevel2, setSelectedCategoryLevel2] = useState("");
   const [selectedId, setSelectedId] = useState("");
-  const [recordViewMode, setRecordViewMode] = useState<RecordViewMode>("network");
   const sortKey: SortKey = "views";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailQuery, setDetailQuery] = useState("");
@@ -1548,7 +1509,6 @@ export function DataMapClient() {
 
     const params = new URLSearchParams(window.location.search);
     const nextKind = params.get("kind");
-    const nextView = params.get("view");
     const nextTheme = params.get("theme") ?? "";
     const nextCategory = params.get("category") ?? "";
     const nextRecord = params.get("record") ?? "";
@@ -1557,9 +1517,7 @@ export function DataMapClient() {
     if (nextKind === "api" || nextKind === "file" || nextKind === "all") {
       setActiveKind(nextKind);
     }
-    setActiveExtension(params.get("extension") ?? "all");
     setDetailQuery(params.get("detail") ?? "");
-    if (nextView === "list" || nextView === "network") setRecordViewMode(nextView);
     setSelectedTheme(nextTheme);
     setSelectedCategoryLevel2(nextCategory);
     setSelectedId(nextRecord);
@@ -1578,11 +1536,9 @@ export function DataMapClient() {
   const baseRecords = useMemo(() => {
     return datasets.filter((record) => {
       const kindMatch = activeKind === "all" || record.kind === activeKind;
-      const extensionMatch =
-        activeExtension === "all" || extensionLabel(record) === activeExtension;
-      return kindMatch && extensionMatch && matchesDataMapSearch(record, query);
+      return kindMatch && matchesDataMapSearch(record, query);
     });
-  }, [activeExtension, activeKind, query, datasets]);
+  }, [activeKind, query, datasets]);
 
   const themeStats = useMemo<ThemeStat[]>(() => {
     return themeOrder.map((theme, index) => {
@@ -1645,24 +1601,20 @@ export function DataMapClient() {
     const params = new URLSearchParams();
     if (query.trim()) params.set("q", query.trim());
     if (activeKind !== "all") params.set("kind", activeKind);
-    if (activeExtension !== "all") params.set("extension", activeExtension);
     if (selectedTheme) params.set("theme", selectedTheme);
     if (selectedCategoryLevel2) params.set("category", selectedCategoryLevel2);
     if (activeSelectedId) params.set("record", activeSelectedId);
     if (detailQuery.trim()) params.set("detail", detailQuery.trim());
-    if (recordViewMode !== "network") params.set("view", recordViewMode);
 
     const nextSearch = params.toString();
     const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (nextUrl !== currentUrl) window.history.replaceState(null, "", nextUrl);
   }, [
-    activeExtension,
     activeKind,
     activeSelectedId,
     detailQuery,
     query,
-    recordViewMode,
     selectedCategoryLevel2,
     selectedTheme,
   ]);
@@ -1695,12 +1647,9 @@ export function DataMapClient() {
   const selectedColor = selectedTheme
     ? (themeStats.find((stat) => stat.theme === selectedTheme)?.color ?? palette[0])
     : palette[0];
-  const extensionOptions = useMemo(() => {
-    return countBy(datasets.map(extensionLabel));
-  }, [datasets]);
   const keywordOptions = useMemo(
-    () => shuffledKeywords(datasets, sourceSnapshot.generatedAt),
-    [datasets, sourceSnapshot.generatedAt],
+    () => topKeywordsByViews(datasets, 10),
+    [datasets],
   );
 
   const graphData = useMemo<{
@@ -1745,54 +1694,54 @@ export function DataMapClient() {
       }
 
       const themeIndex = Math.max(themeOrder.indexOf(selectedTheme), 0);
+      const categoryColorMap = new Map<string, string>();
+      const sortedGroups = [...groups.entries()].sort(
+        ([categoryA, recordsA], [categoryB, recordsB]) =>
+          recordsB.length - recordsA.length || categoryA.localeCompare(categoryB, "ko-KR"),
+      );
       items.push(
-        ...[...groups.entries()]
-          .sort(
-            ([categoryA, recordsA], [categoryB, recordsB]) =>
-              recordsB.length - recordsA.length || categoryA.localeCompare(categoryB, "ko-KR"),
-          )
-          .map<GraphItem>(([category, recordsInGroup], index) => {
-            const summary = summarizeRecords(recordsInGroup);
+        ...sortedGroups.map<GraphItem>(([category, recordsInGroup], index) => {
+          const summary = summarizeRecords(recordsInGroup);
+          const color = palette[(themeIndex + index + 1) % palette.length];
+          categoryColorMap.set(category, color);
 
-            return {
-              id: level2NodeId(selectedTheme, category),
-              kind: "level2",
-              label: category,
-              countLabel: formatNumber(recordsInGroup.length),
-              color: palette[(themeIndex + index + 1) % palette.length],
-              radius: level2NodeRadius,
-              tooltip: summaryTooltip(`${selectedTheme} > ${category}`, summary),
-              parentId: level1NodeId(selectedTheme),
-              theme: selectedTheme,
-              categoryLevel2: category,
-            };
-          }),
+          return {
+            id: level2NodeId(selectedTheme, category),
+            kind: "level2",
+            label: category,
+            countLabel: formatNumber(recordsInGroup.length),
+            color,
+            radius: level2NodeRadius,
+            tooltip: summaryTooltip(`${selectedTheme} > ${category}`, summary),
+            parentId: level1NodeId(selectedTheme),
+            theme: selectedTheme,
+            categoryLevel2: category,
+          };
+        }),
       );
 
       const datasetItems = [...records].sort(compareRecords(sortKey));
 
-      if (recordViewMode === "network") {
-        items.push(
-          ...datasetItems.map<GraphItem>((record) => {
-            const category = level2Label(record);
+      items.push(
+        ...datasetItems.map<GraphItem>((record) => {
+          const category = level2Label(record);
 
-            return {
-              id: `record-${record.id}`,
-              kind: "record",
-              label: record.name,
-              countLabel:
-                record.kind === "api" ? "API" : record.extension || record.format || "FILE",
-              color: record.kind === "api" ? "#2563eb" : "#059669",
-              radius: recordDotRadius,
-              tooltip: recordTooltip(record),
-              parentId: level2NodeId(selectedTheme, category),
-              theme: level1Label(record),
-              categoryLevel2: category,
-              recordId: record.id,
-            };
-          }),
-        );
-      }
+          return {
+            id: `record-${record.id}`,
+            kind: "record",
+            label: record.name,
+            countLabel:
+              record.kind === "api" ? "API" : record.extension || record.format || "FILE",
+            color: categoryColorMap.get(category) ?? palette[themeIndex % palette.length],
+            radius: recordDotRadius,
+            tooltip: recordTooltip(record),
+            parentId: level2NodeId(selectedTheme, category),
+            theme: level1Label(record),
+            categoryLevel2: category,
+            recordId: record.id,
+          };
+        }),
+      );
     }
 
     return {
@@ -1802,7 +1751,6 @@ export function DataMapClient() {
   }, [
     baseRecords,
     query,
-    recordViewMode,
     selectedTheme,
     sortKey,
     themeStats,
@@ -1872,9 +1820,7 @@ export function DataMapClient() {
     const nextRecords = datasets.filter(
       (record) => {
         const kindMatch = activeKind === "all" || record.kind === activeKind;
-        const extensionMatch =
-          activeExtension === "all" || extensionLabel(record) === activeExtension;
-        return kindMatch && extensionMatch && matchesDataMapSearch(record, term);
+        return kindMatch && matchesDataMapSearch(record, term);
       },
     );
     const nextTheme =
@@ -1912,25 +1858,9 @@ export function DataMapClient() {
     setDatasetPage(0);
   }
 
-  function chooseExtension(extension: string) {
-    setActiveExtension(extension);
-    setSelectedTheme("");
-    setSelectedCategoryLevel2("");
-    setSelectedId("");
-    setDetailQuery("");
-    setDatasetPage(0);
-  }
-
-  function chooseRecordViewMode(mode: RecordViewMode) {
-    setRecordViewMode(mode);
-    if (mode === "list" && selectedTheme) setDetailsOpen(true);
-    window.setTimeout(() => graphControls.current?.fitAll(), 0);
-  }
-
   function resetSearchConditions() {
     setQuery("");
     setActiveKind("all");
-    setActiveExtension("all");
     setSelectedTheme("");
     setSelectedCategoryLevel2("");
     setSelectedId("");
@@ -2048,10 +1978,10 @@ export function DataMapClient() {
       <header className="map-header">
         <div className="brand-area">
           <span className="brand-mark" aria-hidden="true">
-            <span>H</span>
+            <img src="/favicon.svg" alt="" />
           </span>
           <div>
-            <h1>한난 데이터맵</h1>
+            <h2>한국지역난방공사 데이터맵</h2>
           </div>
         </div>
 
@@ -2066,20 +1996,6 @@ export function DataMapClient() {
                 <option value="all">전체 유형</option>
                 <option value="api">API</option>
                 <option value="file">파일데이터</option>
-              </select>
-            </label>
-            <label className="condition-select">
-              <span>확장자</span>
-              <select
-                value={activeExtension}
-                onChange={(event) => chooseExtension(event.target.value)}
-              >
-                <option value="all">전체 확장자</option>
-                {extensionOptions.map((extension) => (
-                  <option key={extension.name} value={extension.name}>
-                    {extension.name}
-                  </option>
-                ))}
               </select>
             </label>
             <div className="global-search-group">
@@ -2173,22 +2089,6 @@ export function DataMapClient() {
       <section className="map-workspace">
         <section className="network-shell" aria-label="공공데이터 네트워크 맵">
           <div className="network-toolbar">
-            <div className="view-mode-toggle" aria-label="데이터셋 표시 방식">
-              <button
-                className={recordViewMode === "network" ? "active" : ""}
-                type="button"
-                onClick={() => chooseRecordViewMode("network")}
-              >
-                네트워크
-              </button>
-              <button
-                className={recordViewMode === "list" ? "active" : ""}
-                type="button"
-                onClick={() => chooseRecordViewMode("list")}
-              >
-                목록
-              </button>
-            </div>
             <button
               className="canvas-help-button"
               type="button"
@@ -2203,7 +2103,7 @@ export function DataMapClient() {
           <NetworkGraph
             center={graphData.center}
             items={graphData.items}
-            labelHighlightTerm={detailQuery}
+            labelHighlightTerm={query}
             onNodeClick={handleGraphNodeClick}
             registerControls={registerGraphControls}
             selectedNodeId={selectedGraphNodeId}

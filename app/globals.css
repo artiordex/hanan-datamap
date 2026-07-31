@@ -83,13 +83,18 @@ a {
   flex: 0 0 48px;
   place-items: center;
   border-radius: 8px;
-  background: var(--primary);
-  color: #ffffff;
-  font-size: 22px;
-  font-weight: 900;
+  background: #ffffff;
 }
 
-.brand-area h1 {
+.brand-mark img {
+  display: block;
+  width: 42px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.brand-area h1,
+.brand-area h2 {
   margin: 0;
   color: #111827;
   font-size: 21px;
@@ -233,10 +238,9 @@ a {
   display: grid;
   grid-template-columns:
     minmax(116px, 0.48fr)
-    minmax(132px, 0.55fr)
-    minmax(230px, 1.25fr)
+    minmax(250px, 1.35fr)
     minmax(190px, 0.9fr)
-    minmax(220px, 1.25fr);
+    minmax(240px, 1.25fr);
   gap: 10px;
   align-items: center;
 }
@@ -382,32 +386,6 @@ a {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.view-mode-toggle {
-  display: flex;
-  overflow: hidden;
-  border: 1px solid #d1d5db;
-  border-radius: 999px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
-}
-
-.view-mode-toggle button {
-  min-width: 68px;
-  height: 32px;
-  border: 0;
-  background: transparent;
-  color: #4b5563;
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.view-mode-toggle button.active {
-  background: var(--primary-dark);
-  color: #ffffff;
 }
 
 .canvas-help-button {
@@ -711,17 +689,14 @@ a {
   stroke: none;
 }
 
-.d3-label-highlight-bg {
-  fill: #fef08a;
-  opacity: 0.96;
-  pointer-events: none;
-}
-
 .d3-label-highlight {
-  fill: #111827;
+  fill: #dc2626;
   paint-order: normal;
   stroke: transparent;
   stroke-width: 0;
+  text-decoration: underline;
+  text-decoration-color: #dc2626;
+  text-decoration-thickness: 2px;
 }
 
 .d3-record-label {
@@ -933,7 +908,6 @@ a {
 .result-search input:focus,
 .result-search button:focus-visible,
 .condition-select select:focus,
-.view-mode-toggle button:focus-visible,
 .canvas-help-button:focus-visible,
 .panel-actions button:focus-visible,
 .canvas-map-controls button:focus-visible,
@@ -1036,12 +1010,6 @@ a {
     left: auto;
   }
 
-  .view-mode-toggle button {
-    min-width: 58px;
-    height: 30px;
-    padding: 0 10px;
-  }
-
   .canvas-help-button {
     width: 30px;
     height: 30px;
@@ -1049,7 +1017,8 @@ a {
 }
 
 @media (max-width: 640px) {
-  .brand-area h1 {
+  .brand-area h1,
+  .brand-area h2 {
     font-size: 19px;
   }
 
@@ -1057,6 +1026,11 @@ a {
     width: 42px;
     height: 42px;
     flex-basis: 42px;
+  }
+
+  .brand-mark img {
+    width: 37px;
+    height: 32px;
   }
 
   .network-shell {
